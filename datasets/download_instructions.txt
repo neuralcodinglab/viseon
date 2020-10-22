@@ -1,0 +1,3 @@
+1. Go to https://groups.csail.mit.edu/vision/datasets/ADE20K/ to download the ADE20K dataset
+2. Put the training and validation folders in the './ADE20K/Images' directory
+3. If using an alternative directory, adjust the default directories in ../local_datasets.py
