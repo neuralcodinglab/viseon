@@ -20,6 +20,7 @@ from torchvision import datasets, transforms
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import Dataset, DataLoader 
 
+
 class CustomLoss(object):
     def __init__(self, recon_loss_type='mse',recon_loss_param=None, stimu_loss_type=None, kappa=0, device='cpu'):
         """Custom loss class for training end-to-end model with a combination of reconstruction loss and sparsity loss
@@ -254,7 +255,7 @@ def train(models, dataset, optimization, train_settings):
                 logstats = ' | '.join('%s : %.3f' %(key,stats[key][-1]) for key in stats) 
                 logger('[%d, %5d] %s' %(epoch,i + 1, logstats))
                 with open(csvpath, 'a') as csvfile:
-                    writer = csv.writer(csvfile, delimiter=' ', quotechar='|', quoting=csv.QUOTE_MINIMAL)
+                    writer = csv.writer(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
                     writer.writerow([epoch,i + 1]+[stats[key][-1] for key in stats])                
 
                 # 4. Visualization
@@ -299,5 +300,54 @@ def train(models, dataset, optimization, train_settings):
 
 
 
+if __name__ == '__main__':
+    import argparse
+    import pandas as pd
+    
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-m", "--model_name", type=str, default="demo_model",
+                    help="model name")
+    ap.add_argument("-dir", "--savedir", type=str, default="./out/demo",
+                    help="directory for saving the model parameters and training statistics")
+    ap.add_argument("-s", "--seed", type=int, default=0,
+                    help="seed for random initialization")
+    ap.add_argument("-e", "--n_epochs", type=int, default=3,
+                    help="number of training epochs")   
+    ap.add_argument("-l", "--log_interval", type=int, default=10,
+                    help="number of batches after which to evaluate model (and logged)")   
+    ap.add_argument("-crit", "--convergence_crit", type=int, default=30,
+                    help="stop-criterion for convergence: number of evaluations after which model is not improved")   
+    ap.add_argument("-bin", "--binary_stimulation", type=bool, default=True,
+                    help="use quantized (binary) instead of continuous stimulation protocol")   
+    ap.add_argument("-sim", "--simulation_type", type=str, default="regular",
+                    help="'regular' or 'personalized' phosphene mapping") 
+    ap.add_argument("-in", "--input_channels", type=int, default=1,
+                    help="only grayscale (single channel) images are supported for now")   
+    ap.add_argument("-out", "--reconstruction_channels", type=int, default=1,
+                    help="only grayscale (single channel) images are supported for now")     
+    ap.add_argument("-act", "--out_activation", type=str, default="sigmoid",
+                    help="use 'sigmoid' for grayscale reconstructions, 'softmax' for boundary segmentation task")   
+    ap.add_argument("-d", "--dataset", type=str, default="characters",
+                    help="'charaters' dataset and 'ADE20K' are supported")   
+    ap.add_argument("-dev", "--device", type=str, default="cuda:0",
+                    help="e.g. use 'cpu' or 'cuda:0' ")   
+    ap.add_argument("-n", "--batch_size", type=int, default=30,
+                    help="'charaters' dataset and 'ADE20K' are supported")   
+    ap.add_argument("-opt", "--optimizer", type=str, default="adam",
+                    help="only 'adam' is supporte for now")   
+    ap.add_argument("-lr", "--learning_rate", type=float, default=0.0001,
+                    help="Use higher learning rates for VGG-loss (perceptual reconstruction task)")  
+    ap.add_argument("-rl", "--reconstruction_loss", type=str, default='mse',
+                    help="'mse', 'VGG' or 'boundary' loss are supported ") 
+    ap.add_argument("-p", "--reconstruction_loss_param", type=float, default=0,
+                    help="In perceptual condition: the VGG layer depth, boundary segmentation: cross-entropy class weight") 
+    ap.add_argument("-L", "--sparsity_loss", type=str, default='L1',
+                    help="choose L1 or L2 type of sparsity loss (MSE or L1('taxidrivers') norm)") 
+    ap.add_argument("-k", "--kappa", type=float, default=0.01,
+                    help="sparsity weight parameter kappa")    
 
+    cfg = pd.Series(vars(ap.parse_args()))
+    print(cfg)
+    models, dataset, optimization, train_settings = initialize_components(cfg)
+    train(models, dataset, optimization, train_settings)
 
