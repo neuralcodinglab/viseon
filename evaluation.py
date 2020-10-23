@@ -49,7 +49,7 @@ def segmentation_metrics(pred, label):
     return pd.Series({'sensitivity': sens, 'specificity': spec, 'precision': prec, 'accuracy': acc})
 
 
-def evaluate_saved_model(cfg, visualize=None):
+def evaluate_saved_model(cfg, visualize=None, savefig=False):
     """ loads the saved model parametes for given configuration <cfg> and returns the performance
     metrics on the validation dataset. The <visualize> argument can be set equal to any positive
     integer that represents the amount of example figures to plot."""
@@ -95,6 +95,8 @@ def evaluate_saved_model(cfg, visualize=None):
                 plt.subplot(n_examples,n_figs,n_figs*i+4)
                 plt.imshow(label[i].squeeze().cpu().numpy(),cmap='gray')
                 plt.axis('off')
+        if savefig:
+            plt.savefig(os.path.join(cfg.savedir,cfg.model_name+'eval.png')
         plt.show()
     
     # Calculate performance metrics
@@ -140,3 +142,53 @@ def plot_grad_flow(named_parameters):
                 Line2D([0], [0], color="b", lw=4),
                 Line2D([0], [0], color="k", lw=4)],
                ['max-gradient', 'mean-gradient', 'zero-gradient'])
+    
+    
+if __name__ == '__main__':
+    import argparse
+    import pandas as pd
+    
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-m", "--model_name", type=str, default="demo_model",
+                    help="model name")
+    ap.add_argument("-dir", "--savedir", type=str, default="./out/demo",
+                    help="directory for saving the model parameters and training statistics")
+    ap.add_argument("-s", "--seed", type=int, default=0,
+                    help="seed for random initialization")
+    ap.add_argument("-e", "--n_epochs", type=int, default=3,
+                    help="number of training epochs")   
+    ap.add_argument("-l", "--log_interval", type=int, default=10,
+                    help="number of batches after which to evaluate model (and logged)")   
+    ap.add_argument("-crit", "--convergence_crit", type=int, default=30,
+                    help="stop-criterion for convergence: number of evaluations after which model is not improved")   
+    ap.add_argument("-bin", "--binary_stimulation", type=bool, default=True,
+                    help="use quantized (binary) instead of continuous stimulation protocol")   
+    ap.add_argument("-sim", "--simulation_type", type=str, default="regular",
+                    help="'regular' or 'personalized' phosphene mapping") 
+    ap.add_argument("-in", "--input_channels", type=int, default=1,
+                    help="only grayscale (single channel) images are supported for now")   
+    ap.add_argument("-out", "--reconstruction_channels", type=int, default=1,
+                    help="only grayscale (single channel) images are supported for now")     
+    ap.add_argument("-act", "--out_activation", type=str, default="sigmoid",
+                    help="use 'sigmoid' for grayscale reconstructions, 'softmax' for boundary segmentation task")   
+    ap.add_argument("-d", "--dataset", type=str, default="characters",
+                    help="'charaters' dataset and 'ADE20K' are supported")   
+    ap.add_argument("-dev", "--device", type=str, default="cuda:0",
+                    help="e.g. use 'cpu' or 'cuda:0' ")   
+    ap.add_argument("-n", "--batch_size", type=int, default=30,
+                    help="'charaters' dataset and 'ADE20K' are supported")   
+    ap.add_argument("-opt", "--optimizer", type=str, default="adam",
+                    help="only 'adam' is supporte for now")   
+    ap.add_argument("-lr", "--learning_rate", type=float, default=0.0001,
+                    help="Use higher learning rates for VGG-loss (perceptual reconstruction task)")  
+    ap.add_argument("-rl", "--reconstruction_loss", type=str, default='mse',
+                    help="'mse', 'VGG' or 'boundary' loss are supported ") 
+    ap.add_argument("-p", "--reconstruction_loss_param", type=float, default=0,
+                    help="In perceptual condition: the VGG layer depth, boundary segmentation: cross-entropy class weight") 
+    ap.add_argument("-L", "--sparsity_loss", type=str, default='L1',
+                    help="choose L1 or L2 type of sparsity loss (MSE or L1('taxidrivers') norm)") 
+    ap.add_argument("-k", "--kappa", type=float, default=0.01,
+                    help="sparsity weight parameter kappa")    
+
+    cfg = pd.Series(vars(ap.parse_args()))
+    evaluate_saved_model(cfg, 5, savefig=True) 
