@@ -96,7 +96,7 @@ def evaluate_saved_model(cfg, visualize=None, savefig=False):
                 plt.imshow(label[i].squeeze().cpu().numpy(),cmap='gray')
                 plt.axis('off')
         if savefig:
-            plt.savefig(os.path.join(cfg.savedir,cfg.model_name+'eval.png')
+            plt.savefig(os.path.join(cfg.savedir,cfg.model_name+'eval.png'))
         plt.show()
     
     # Calculate performance metrics
