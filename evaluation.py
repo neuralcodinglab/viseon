@@ -191,4 +191,5 @@ if __name__ == '__main__':
                     help="sparsity weight parameter kappa")    
 
     cfg = pd.Series(vars(ap.parse_args()))
-    evaluate_saved_model(cfg, 5, savefig=True) 
+    metrics = evaluate_saved_model(cfg, 5, savefig=True)
+    print(metrics)
