@@ -89,7 +89,7 @@ def evaluate_saved_model(cfg, visualize=None, savefig=False):
             plt.imshow(phosphenes[i].squeeze().cpu().numpy(),cmap='gray')
             plt.axis('off')
             plt.subplot(n_examples,n_figs,n_figs*i+3)
-            plt.imshow(reconstruction[i].squeeze().cpu().numpy(),cmap='gray')
+            plt.imshow(reconstruction[i][0].squeeze().cpu().numpy(),cmap='gray')
             plt.axis('off')
             if n_figs > 3:
                 plt.subplot(n_examples,n_figs,n_figs*i+4)
