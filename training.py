@@ -6,6 +6,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import math
+import warnings
 
 # Local dependencies
 import model,utils
@@ -22,11 +23,16 @@ from torch.utils.data import Dataset, DataLoader
 
 
 class CustomLoss(object):
-    def __init__(self, recon_loss_type='mse',recon_loss_param=None, stimu_loss_type=None, kappa=0, device='cpu'):
-        """Custom loss class for training end-to-end model with a combination of reconstruction loss and sparsity loss
-        reconstruction loss type can be either one of: 'mse' (pixel-intensity based), 'vgg' (i.e. perceptual loss/feature loss) 
-        or 'boundary' (weighted cross-entropy loss on the output<>semantic boundary labels).
+    def __init__(self, recon_loss_type='mse',recon_loss_param=None,
+                 stimu_loss_type=None, kappa=0, phosphene_regularization=None, reg_weight=0,phosphene_loss_param=0, device='cpu'):
+        """Custom loss class for training end-to-end model with a combination of reconstruction loss 
+        and sparsity loss. It automatically keeps track of the loss statistics. 
+        reconstruction loss type can be either one of: 'mse' (pixel-intensity based),
+        'vgg' (i.e. perceptual loss/feature loss) or 'boundary' (weighted 
+        cross-entropy loss on the output<>semantic boundary labels).
         stimulation loss type (i.e. sparsity loss) can be either 'L1', 'L2' or None.
+        
+          
         """
         
         # Reconstruction loss
@@ -38,8 +44,11 @@ class CustomLoss(object):
             self.recon_loss = lambda x,y: torch.nn.functional.mse_loss(self.feature_extractor(x),self.feature_extractor(y))
             self.target = 'image'
         elif recon_loss_type == 'boundary':
-            loss_weights = torch.tensor([1-recon_loss_param,recon_loss_param],device=device)
-            self.recon_loss = torch.nn.CrossEntropyLoss(weight=loss_weights)
+#             loss_weights = torch.tensor([1-recon_loss_param,recon_loss_param],device=device)
+#             self.recon_loss = torch.nn.CrossEntropyLoss(weight=loss_weights)
+            weight = torch.tensor(recon_loss_param,device=device)
+            self.recon_loss = lambda x,y,w=weight: torch.nn.functional.binary_cross_entropy(
+                x,y,weight=y*w+(1-y)*(1-w))  
             self.target = 'label'
 
         # Stimulation loss 
@@ -51,16 +60,32 @@ class CustomLoss(object):
             self.stimu_loss = None
         self.kappa = kappa if self.stimu_loss is not None else 0
         
+        # Phosphene regularization
+        if phosphene_regularization == 'L1':
+            self.reg_loss = lambda stim,ref: ((.5*(stim+1))-ref).abs().mean()
+        elif phosphene_regularization == 'L2':
+            self.reg_loss = lambda stim,ref: (((.5*(stim+1))-ref)**2).mean()
+        elif phosphene_regularization == 'bce':
+            weight_p = torch.tensor(phosphene_loss_param,device=device)
+            self.reg_loss = lambda stim,ref,w=weight_p: torch.nn.functional.binary_cross_entropy(.5*(stim+1),ref,weight=ref*w+(1-ref)*(1-w))
+        elif phosphene_regularization == 'dist':
+            self.reg_loss = lambda stim,ref: (stim*ref).mean()
+        elif phosphene_regularization is None:
+            self.reg_loss = None
+        self.reg_weight = reg_weight if phosphene_regularization is not None else 0
+        
         # Output statistics 
-        self.stats = {'tr_recon_loss':[],'val_recon_loss': [],'tr_total_loss':[],'val_total_loss':[]}
-        if self.stimu_loss is not None:   
-            self.stats['tr_stimu_loss']= []
-            self.stats['val_stimu_loss']= []
-        self.running_loss = {'recon':0,'stimu':0,'total':0}
-        self.n_iterations = 0
+        self.loss_types = ['recon_loss', 'total_loss']
+        if self.stimu_loss is not None:
+            self.loss_types.insert(0,'stimu_loss')
+        if self.reg_loss is not None:
+            self.loss_types.insert(0,'reg_loss')
         
-        
-    def __call__(self,image,label,stimulation,phosphenes,reconstruction,validation=False):    
+        self.stats = {mode+loss:[] for loss in self.loss_types for mode in ['val_', 'tr_']}
+        self.running_loss = {key:0 for key in self.stats}
+        self.running_loss.update({'val_img_count':0,'tr_img_count':0})
+
+    def __call__(self,image,label,stimulation,phosphenes,reconstruction,validation=False,reg_target=None):    
         
         # Target
         if self.target == 'image': # Flag for reconstructing input image or target label
@@ -69,29 +94,34 @@ class CustomLoss(object):
             target = label
         
         # Calculate loss
-        loss_stimu = self.stimu_loss(stimulation) if self.stimu_loss is not None else torch.tensor(0)
-        loss_recon = self.recon_loss(reconstruction,target)
-        loss_total = (1-self.kappa)*loss_recon + self.kappa*loss_stimu
-        
-        if not validation:
-            # Save running loss and return total loss
-            self.running_loss['stimu'] += loss_stimu.item()
-            self.running_loss['recon'] += loss_recon.item()
-            self.running_loss['total'] += loss_total.item()
-            self.n_iterations += 1
-            return loss_total
+        result = dict()
+        if self.reg_loss is not None:
+#             result['reg_loss'] = self.reg_loss(stimulation,target[:,0,self.reg_mask[0],self.reg_mask[1]])
+            result['reg_loss'] = self.reg_loss(stimulation,reg_target)
         else:
-            # Return train loss (from running loss) and validation loss
-            self.stats['val_recon_loss'].append(loss_recon.item())
-            self.stats['val_total_loss'].append(loss_total.item())
-            self.stats['tr_recon_loss'].append(self.running_loss['recon']/self.n_iterations)
-            self.stats['tr_total_loss'].append(self.running_loss['total']/self.n_iterations)
-            if self.stimu_loss is not None:
-                self.stats['val_stimu_loss'].append(loss_stimu.item())
-                self.stats['tr_stimu_loss'].append(self.running_loss['stimu']/self.n_iterations)  
-            self.running_loss = {key:0 for key in self.running_loss}
-            self.n_iterations = 0
-            return self.stats
+            result['reg_loss'] = torch.tensor(0)
+        result['stimu_loss'] = self.stimu_loss(stimulation) if self.stimu_loss is not None else torch.tensor(0)
+        result['recon_loss'] = self.recon_loss(reconstruction,target)
+        result['total_loss'] = (1-self.kappa)*result['recon_loss'] + self.kappa*result['stimu_loss'] + self.reg_weight * result['reg_loss']
+        
+        # Store the running loss
+        mode = 'val_' if validation else 'tr_'
+        for type_ in self.loss_types:
+            self.running_loss[mode+type_] += result[type_].item() *len(image)
+        self.running_loss[mode+'img_count'] += len(image)
+        
+        return result['total_loss']
+        
+    def get_stats(self):
+        # append runnning loss to stats, reset running loss, and return stats
+        for mode in ['val_','tr_']:
+            for type_ in self.loss_types: 
+                img_count = self.running_loss[mode+'img_count']
+                if img_count != 0: #assert that running loss is not 'empty'
+                    self.stats[mode+type_].append(self.running_loss[mode+type_]/img_count) 
+                    self.running_loss[mode+type_] = 0
+        self.running_loss.update({'val_img_count':0,'tr_img_count':0}) # reset count of loss iterations 
+        return self.stats
 
 
 def initialize_components(cfg):
@@ -101,8 +131,9 @@ def initialize_components(cfg):
     """
 
     # Random seed
-    torch.manual_seed(cfg.seed)
-    np.random.seed(cfg.seed)
+    seed = cfg.seed
+    torch.manual_seed(seed)
+    np.random.seed(seed)
     
     # Models
     models = dict()
@@ -110,13 +141,14 @@ def initialize_components(cfg):
                                         binary_stimulation=cfg.binary_stimulation).to(cfg.device)
     models['decoder'] = model.E2E_Decoder(out_channels=cfg.reconstruction_channels,
                                         out_activation=cfg.out_activation).to(cfg.device)
+    
     if cfg.simulation_type == 'regular':
-        pMask = utils.get_pMask(jitter_amplitude=0,dropout=False) # phosphene mask with regular mapping
-    elif cfg.simulation_type == 'personalized':
-        pMask = utils.get_pMask(seed=1,jitter_amplitude=.5,dropout=True,perlin_noise_scale=.4) # pers. phosphene mask
+        pMask = utils.get_pMask(jitter_amplitude=0,dropout=False,seed=seed) # phosphene mask with regular mapping
+    elif cfg.simulation_type == 'irregular':
+        pMask      = utils.get_pMask(intensity_var=1, jitter_amplitude=0.5,dropout=False,seed=8)
     models['simulator'] = model.E2E_PhospheneSimulator(pMask=pMask.to(cfg.device),
                                                            sigma=1.5,
-                                                           intensity=15,
+                                                           intensity=10,
                                                            device=cfg.device).to(cfg.device)
 
     # Dataset
@@ -128,7 +160,9 @@ def initialize_components(cfg):
         trainset = local_datasets.ADE_Dataset(device=cfg.device)
         valset = local_datasets.ADE_Dataset(device=cfg.device,validation=True)
     dataset['trainloader'] = DataLoader(trainset,batch_size=int(cfg.batch_size),shuffle=True)
-    dataset['valloader'] = DataLoader(valset,batch_size=int(cfg.batch_size),shuffle=False)
+    dataset['valloader'] = DataLoader(valset,batch_size=min([len(valset),100]),shuffle=False)
+    dataset['trainset'] = trainset
+    dataset['valset'] = valset
 
     # Optimization
     optimization = dict()
@@ -138,16 +172,23 @@ def initialize_components(cfg):
     elif cfg.optimizer == 'sgd':
         optimization['encoder'] = torch.optim.SGD(models['encoder'].parameters(),lr=cfg.learning_rate)
         optimization['decoder'] = torch.optim.SGD(models['decoder'].parameters(),lr=cfg.learning_rate)
+    
+#     # for regularizing phosphene mapping
+#     pMap = torch.nn.functional.interpolate(models['simulator'].pMap.unsqueeze(dim=1),size=(128,128))
+#     pLocs = pMap.view(N_PHOSPHENES,-1).argmax(dim=-1)
+#     pLocs = pLocs // 128, pLocs % 128 # y and x coordinates of the center of each phosphene
+    
     optimization['lossfunc'] = CustomLoss(recon_loss_type=cfg.reconstruction_loss,
                                                 recon_loss_param=cfg.reconstruction_loss_param,
                                                 stimu_loss_type=cfg.sparsity_loss,
                                                 kappa=cfg.kappa,
-                                                device=cfg.device)                                   
+                                                phosphene_regularization=cfg.phosphene_regularization,
+                                                reg_weight=cfg.reg_weight,                                                
+                                                device=cfg.device,
+                                                phosphene_loss_param=cfg.phosphene_loss_param)                                   
     
     # Additional train settings
     train_settings = dict()
-    if not os.path.exists(cfg.savedir):
-        os.makedirs(cfg.savedir)
     train_settings['model_name'] = cfg.model_name
     train_settings['savedir']=cfg.savedir
     train_settings['n_epochs'] = cfg.n_epochs
@@ -157,7 +198,7 @@ def initialize_components(cfg):
     
 
 
-def train(models, dataset, optimization, train_settings):
+def train(models, dataset, optimization, train_settings, visualize=False):
     
     ## A. Unpack parameters
    
@@ -186,7 +227,7 @@ def train(models, dataset, optimization, train_settings):
     
     ## B. Logging
     if not os.path.exists(savedir):
-        os.makedirs(savedir)
+        os.makedirs(os.path.join(savedir,'figures'))
     logger = utils.Logger(os.path.join(savedir,'out.log'))
     csvpath = os.path.join(savedir,model_name+'_train_stats.csv')
     logstats = list(loss_function.stats.keys())
@@ -227,50 +268,54 @@ def train(models, dataset, optimization, train_settings):
             loss.backward()
             encoder_optim.step()
             decoder_optim.step()
+            
 
+            
 
             # VALIDATION
-            if i==len(trainloader) or i % log_interval == (log_interval-1):
-                image,label = next(iter(valloader))
+            if i==len(trainloader)-1 or i % log_interval == (log_interval-1):
+
 
                 encoder.eval()
                 decoder.eval()
+                for _, data in enumerate(valloader):
+                    image,label = data
+                    with torch.no_grad():
 
-                with torch.no_grad():
+                        # 1. Forward pass
+                        stimulation = encoder(image)
+                        phosphenes  = simulator(stimulation)
+                        reconstruction = decoder(phosphenes)            
 
-                    # 1. Forward pass
-                    stimulation = encoder(image)
-                    phosphenes  = simulator(stimulation)
-                    reconstruction = decoder(phosphenes)            
-
-                    # 2. Loss
-                    stats = loss_function(image=image,
-                                          label=label,
-                                          stimulation=encoder.out,
-                                          phosphenes=phosphenes,
-                                          reconstruction=reconstruction,
-                                          validation=True)            
+                        # 2. Loss
+                        loss = loss_function(image=image,
+                                              label=label,
+                                              stimulation=encoder.out,
+                                              phosphenes=phosphenes,
+                                              reconstruction=reconstruction,
+                                              validation=True)
+                stats = loss_function.get_stats()
                                
                 # 3. Logging
-                logstats = ' | '.join('%s : %.3f' %(key,stats[key][-1]) for key in stats) 
+                logstats = ' | '.join('%s : %.3f' %(key,stats[key][-1]) for key in stats if stats[key]) 
                 logger('[%d, %5d] %s' %(epoch,i + 1, logstats))
                 with open(csvpath, 'a') as csvfile:
                     writer = csv.writer(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
-                    writer.writerow([epoch,i + 1]+[stats[key][-1] for key in stats])                
+                    writer.writerow([epoch,i + 1]+[stats[key][-1] if stats[key] else 'NaN' for key in stats])                
 
                 # 4. Visualization
-                plt.figure(figsize=(10,10),dpi=50)
-                utils.plot_stats(stats)
-                plt.figure(figsize=(10,10),dpi=50)
-                utils.plot_images(image[:5])
-                plt.figure(figsize=(10,10),dpi=50)
-                utils.plot_images(phosphenes[:5])
-                plt.figure(figsize=(10,10),dpi=50)
-                utils.plot_images(reconstruction[:5])
-                if len(label.shape)>1:
+                if visualize:
+                    results = torch.cat([image[:5,-1:],reconstruction[:5]],axis=-1)
+                    results = torch.cat([results,phosphenes[:5]],axis=-2)
+                    
                     plt.figure(figsize=(10,10),dpi=50)
-                    utils.plot_images(label[:5])    
-                
+                    utils.plot_stats(stats,save_as=os.path.join(savedir,
+                                                'figures/_{}_Trainstats.png'.format(model_name)))
+                    plt.figure(figsize=(10,3),dpi=100)
+                    fn = 'figures/{}_E{:02d}-{:03d}.png'.format(model_name,epoch,i)
+                    utils.plot_images(results,save_as=os.path.join(savedir,fn))
+                   
+                   
                 # 5. Save model (if best)
                 if  np.argmin(stats['val_total_loss'])+1==len(stats['val_total_loss']):
                     savepath = os.path.join(savedir,model_name + '_best_encoder.pth' )#'_e%d_encoder.pth' %(epoch))#,i))
@@ -305,6 +350,8 @@ if __name__ == '__main__':
     import pandas as pd
     
     ap = argparse.ArgumentParser()
+    ap.add_argument("-csv","--use_csv", type=str, default=None,
+                    help="path/to/csv-file with multiple train configurations")
     ap.add_argument("-m", "--model_name", type=str, default="demo_model",
                     help="model name")
     ap.add_argument("-dir", "--savedir", type=str, default="./out/demo",
@@ -346,8 +393,16 @@ if __name__ == '__main__':
     ap.add_argument("-k", "--kappa", type=float, default=0.01,
                     help="sparsity weight parameter kappa")    
 
-    cfg = pd.Series(vars(ap.parse_args()))
-    print(cfg)
-    models, dataset, optimization, train_settings = initialize_components(cfg)
-    train(models, dataset, optimization, train_settings)
+    args = vars(ap.parse_args())
+    if args['use_csv'] is None:
+        cfg = pd.Series(args)       
+        print(cfg)
+        models, dataset, optimization, train_settings = initialize_components(cfg)
+        train(models, dataset, optimization, train_settings)
+    else:
+        training_protocol = pd.read_csv(args['use_csv']).replace({'None':None,'True':True,'False':False})
+        for i,cfg in training_protocol.iterrows():
+            print(cfg)
+            models, dataset, optimization, train_settings = initialize_components(cfg)
+            train(models, dataset, optimization, train_settings)
 

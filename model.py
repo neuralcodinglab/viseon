@@ -7,7 +7,7 @@ import numbers
 import torchvision
 from torchvision import transforms
 import cv2 as cv
-
+import utils
 
 
 
@@ -54,7 +54,7 @@ class VGG_Feature_Extractor(object):
         for child in [*self.feature_extractor]:
             for p in child.parameters():
                 p.requires_grad = False
-        self.rgbConverter = RGBConverter()
+        self.rgbConverter = utils.RGBConverter()
     def __call__(self,image):
         if image.shape[1]==1:
             image = self.rgbConverter(image)
@@ -181,25 +181,138 @@ class E2E_PhospheneSimulator(nn.Module):
         phosphenes = self.gaussian(F.pad(phosphenes, (5,5,5,5), mode='constant', value=0)) 
         return self.intensity*phosphenes    
 
-class E2E_CannyModel(nn.Module):
-    """Uses openCVs Canny edge detection module for image filtering. 
-    The edge map is converted to a stimulation map (by downsampling to n_phosphenes*n_phosphenes"""
-    def __init__(self,scale_factor,device,imsize=(128,128),ksize=(7,7),sigma=1,low=50,high=100):
-        super(E2E_CannyModel, self).__init__()
+class Canny_Encoder(nn.Module):
+    """
+    Encoder class based on the OpenCV Canny edge detection implementation. 
+    Outputs stimulation protocol with same size as input.
+    
+    low: low threshold
+    high: high threshold
+    sigma: size parameter for Gaussian blur
+    """   
+    def __init__(self, low=40, high=80, sigma=1.5, **kwargs):
+        super(Canny_Encoder, self).__init__()
         
-        self.device = device        
-        self.to_cv2_list = lambda image_tensor : [np.squeeze((255*img.cpu().numpy())).astype('uint8') for img in image_tensor]
-        self.gaus_blur   = lambda image_list : [cv.GaussianBlur(img,ksize=ksize,sigmaX=sigma) for img in image_list]
-        self.canny_edge  = lambda image_list : [cv.Canny(img,low,high) for img in image_list]
-        self.to_tensor   = lambda image_list : torch.tensor(image_list, device=device,dtype=torch.float32).unsqueeze(axis=1)
-        self.interpolate = lambda image_tensor : F.interpolate(image_tensor,scale_factor=scale_factor)
+        # Parameters
+        self.thres = nn.parameter.Parameter(torch.tensor([low,high]), requires_grad=False)
+        self.sigma = nn.parameter.Parameter(torch.tensor(sigma), requires_grad=False)
+        ksize      = np.round(4.*sigma+1.).astype(int) #rule of thumb
+        dilation_kernel  = cv.getStructuringElement(cv.MORPH_ELLIPSE,(3,3))
         
-        self.model = transforms.Compose([transforms.Lambda(self.to_cv2_list),
-                                             transforms.Lambda(self.gaus_blur),
-                                             transforms.Lambda(self.canny_edge),
-                                             transforms.Lambda(self.to_tensor),
-                                             transforms.Lambda(self.interpolate)])
-                                                   
+        
+        # Image operations
+        self.Canny = lambda img: cv.Canny(img,low,high)
+        self.blur  = lambda img: cv.GaussianBlur(img,(ksize,ksize),sigma)
+        self.dilate= lambda img: cv.dilate(img,dilation_kernel)
+        
     def forward(self, x):
-        return  self.model(x)/255  
+        x = 255*(x-x.min())/(x.max()-x.min()) # standardize to 8-bit unsigned integer
+        img = x.cpu().numpy().squeeze().astype('uint8')
+        img = [self.blur(i)  for i in img]
+        img = [self.Canny(i) for i in img]
+        img = [torch.tensor(self.dilate(i)/255.,device=x.device).float() for i in img]
+        self.out = torch.stack(img,dim=0).unsqueeze(dim=1)    
+        return self.out
+    
+ # HED Model
+class CropLayer(object):
+    """Caffe layer for OpenCV HED model"""
+    def __init__(self, params, blobs):
+        # initialize our starting and ending (x, y)-coordinates of
+        # the crop
+        self.startX = 0
+        self.startY = 0
+        self.endX = 0
+        self.endY = 0
+
+    def getMemoryShapes(self, inputs):
+        # the crop layer will receive two inputs -- we need to crop
+        # the first input blob to match the shape of the second one,
+        # keeping the batch size and number of channels
+        (inputShape, targetShape) = (inputs[0], inputs[1])
+        (batchSize, numChannels) = (inputShape[0], inputShape[1])
+        (H, W) = (targetShape[2], targetShape[3])
+
+        # compute the starting and ending crop coordinates
+        self.startX = int((inputShape[3] - targetShape[3]) / 2)
+        self.startY = int((inputShape[2] - targetShape[2]) / 2)
+        self.endX = self.startX + W
+        self.endY = self.startY + H
+
+        # return the shape of the volume (we'll perform the actual
+        # crop during the forward pass
+        return [[batchSize, numChannels, H, W]]
+
+    def forward(self, inputs):
+        # use the derived (x, y)-coordinates to perform the crop
+        return [inputs[0][:, :, self.startY:self.endY,
+                self.startX:self.endX]]   
+
+class HED_Encoder(nn.Module):
+    """
+    Encoder class based on the OpenCV HED implementation. 
+    Outputs stimulation protocol with same size as input.
+    """   
+    def __init__(self, **kwargs):
+        super(HED_Encoder, self).__init__()
+        
+        # Parameters
+        protoPath = "deploy.prototxt"
+        modelPath = "hed_pretrained_bsds.caffemodel"
+        self.net = cv.dnn.readNetFromCaffe(protoPath, modelPath)
+        cv.dnn_registerLayer("Crop", CropLayer) # register our new layer with the model
+    
+    def forward(self, x):
+        """ Note x is provided in [B,C,H,W] format where C should be RGB channels"""
+        i = x.repeat(1,3,1,1) if x.shape[1]==1 else x[:,[2,1,0],:,:] # convert to BGR
+        self.net.setInput(i.cpu().numpy())
+        self.out = torch.tensor(self.net.forward(),device=x.device).float()
+        return (self.out>0.5).float()
+    
+
+
+class Intensity_Encoder(nn.Module):
+    """
+    Encoder class that returns the thresholded pixel_intensity of the input (same size)
+    """   
+    def __init__(self, threshold=0.5, **kwargs):
+        super(Intensity_Encoder, self).__init__()
+        # Parameters
+        self.thres = nn.parameter.Parameter(torch.tensor(threshold), requires_grad=False)
+        
+    def forward(self, x):
+        self.out = x   
+        return (self.out>self.thres).float()
+    
+    
+    
+    
+  #### Old model   
+# class E2E_CannyModel(nn.Module):
+#     """Uses openCVs Canny edge detection module for image filtering. 
+#     The edge map is converted to a stimulation map (by downsampling to n_phosphenes*n_phosphenes"""
+#     def __init__(self,scale_factor,device,imsize=(128,128),ksize=(7,7),
+#                  sigma=1,low=50,high=100,dilation=False):
+#         super(E2E_CannyModel, self).__init__()
+        
+#         k_size           = (1,1) if not dilation else (3,3)
+#         dilation_kernel  = cv.getStructuringElement(cv.MORPH_ELLIPSE,k_size)
+        
+#         self.device = device        
+#         self.to_cv2_list = lambda image_tensor : [np.squeeze((255*img.cpu().numpy())).astype('uint8') for img in image_tensor]
+#         self.gaus_blur   = lambda image_list : [cv.GaussianBlur(img,ksize=ksize,sigmaX=sigma) for img in image_list]
+#         self.canny_edge  = lambda image_list : [cv.Canny(img,low,high) for img in image_list]
+#         self.dilate      = lambda image_list : [cv.dilate(img,dilation_kernel) for img in image_list]
+#         self.to_tensor   = lambda image_list : torch.tensor(image_list, device=device,dtype=torch.float32).unsqueeze(axis=1)
+#         self.interpolate = lambda image_tensor : F.interpolate(image_tensor,scale_factor=scale_factor)
+        
+#         self.model = transforms.Compose([transforms.Lambda(self.to_cv2_list),
+#                                              transforms.Lambda(self.gaus_blur),
+#                                              transforms.Lambda(self.canny_edge),
+#                                              transforms.Lambda(self.dilate),
+#                                              transforms.Lambda(self.to_tensor),
+#                                              transforms.Lambda(self.interpolate)])
+                                                   
+#     def forward(self, x):
+#         return  self.model(x)/255  
     
