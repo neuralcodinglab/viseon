@@ -90,6 +90,37 @@ class E2E_Encoder(nn.Module):
             x = x + torch.sign(x).detach() - x.detach() # (self-through estimator)
         stimulation = .5*(x+1)
         return stimulation    
+
+
+class E2E_Encoder2(nn.Module):
+    """
+    Encoder that is used in Exp4, with a linear head. Each output indicates activation of a single electrode 
+    """   
+    def __init__(self, in_channels=3, out_channels=650,binary_stimulation=True):
+        super(E2E_Encoder2, self).__init__()
+             
+        self.binary_stimulation = binary_stimulation
+        
+        # Model
+        self.model = nn.Sequential(*convlayer(in_channels,8,3,1,1),
+                                   *convlayer(8,16,3,1,1,resample_out=nn.MaxPool2d(2)),
+                                   *convlayer(16,32,3,1,1,resample_out=nn.MaxPool2d(2)),
+                                   ResidualBlock(32, resample_out=None),
+                                   ResidualBlock(32, resample_out=None),
+                                   ResidualBlock(32, resample_out=None),
+                                   ResidualBlock(32, resample_out=None),
+                                   *convlayer(32,16,3,1,0),
+                                   *convlayer(16,1,3,1,0),
+                                   nn.Flatten(),
+                                   nn.Linear(28*28,out_channels),
+                                   nn.Tanh())
+    def forward(self, x):
+        self.out = self.model(x)
+        x = self.out
+        if self.binary_stimulation:
+            x = x + torch.sign(x).detach() - x.detach() # (self-through estimator)
+        stimulation = .5*(x+1)
+        return stimulation   
     
 class E2E_Decoder(nn.Module):
     """
@@ -180,6 +211,18 @@ class E2E_PhospheneSimulator(nn.Module):
         phosphenes = self.up(stimulation)*self.pMask
         phosphenes = self.gaussian(F.pad(phosphenes, (5,5,5,5), mode='constant', value=0)) 
         return self.intensity*phosphenes    
+
+class Simulator2(object):
+    """ Modular phosphene simulator that is used in experiment 4. Requires a predefined phosphene mapping. e.g. Tensor of 650 X 256 X 256 where 650 is the number of phosphenes and 256 X 256 is the resolution of the output image."""
+    def __init__(self,pMap=None, pMap_from_file='training_configuration/model_parameters/phosphene_map_exp4.pt'):
+        # Phospene mapping (should be of shape: n_phosphenes, res_x, res_y)
+        if pMap is not None:
+            self.pMap = pMap
+        else:
+            self.pMap = torch.load(pMap_from_file)
+    
+    def __call__(self,stim):
+        return torch.einsum('ij, jkl -> ikl', stim, self.pMap).unsqueeze(dim=1) 
 
 class Canny_Encoder(nn.Module):
     """
