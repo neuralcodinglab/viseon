@@ -1,4 +1,4 @@
-##End-to-end optimization of prosthetic vision
+# End-to-end optimization of prosthetic vision
 doi:https://doi.org/10.1167/jov.22.2.20
 corresponding author: jaap.deruyter@donders.ru.nl
 
