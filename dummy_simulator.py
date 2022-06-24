@@ -20,16 +20,14 @@ class GaussianSimulator(object):
         self.device = pMap.device
         self.sigma_0 = sigma_0
         self.sampling_mask = sampling_mask
-        self.threshold = threshold
-        self.slope_thresh = slope_thresh
         assert (sampling_mask.device == self.device) and (sigma_0.device == self.device)
-        if threshold is not None:
-            assert (threshold.device == self.device) and (slope_thresh.device == self.device) 
             
         self.batch_size = batch_size
         # Other parameters
         self.__dict__.update(kwargs)
 
+        self.print_stats=False
+        
         # if self.use_threshold: #TODO: check whether this can be here or needs to be in update b/o torch graph construction
         #     self.SIGMOID = lambda x: 1 / (1 + torch.exp(-x))
         #     self.SLOPE_FACTOR = lambda input, base, center: torch.pow(base,(input-center)/center)
@@ -43,45 +41,23 @@ class GaussianSimulator(object):
         self.sigma = self.sigma_0.repeat(self.batch_size,1).to(self.device) 
         self.activation = torch.zeros(self.batch_size,len(self.pMap)).to(self.device)
         
-        if self.video:
-            self.trace = torch.zeros(self.batch_size,len(self.pMap)).to(self.device)
-        
     def update(self,stim): 
         """Adjust state as function of previous state and current stimulation. 
         NOTE: all parameters (such as intensity_decay) must be provided at initialization"""
 
-        # update activation using trace for habituation 
-        if self.video:
-            self.activation = self.intensity_decay*self.activation + self.input_effect*(stim-self.trace)  
-            self.activation = torch.max(self.activation,torch.zeros_like(self.activation))  # don't allow negative activations
-            self.trace = self.trace_decay*self.trace + self.trace_increase*stim  # update trace
-        else:
-            self.activation = stim #TODO: maybe multiply by constant? check!
-        # Bosking et al., 2017: AC = MD / (1 + np.exp(-slope*(I-I_50)))
-        AC = self.MD / torch.add(torch.exp(-self.slope_stim*(stim-self.I_half)),1)
-        # self.sigma = AC*self.sigma_0.repeat(self.batch_size,1) ### TODO: adjust temporal properties here, or not. Antonio thinks size is not affected by habituation, but rather seems to be due to using gaussians (lower intensity also leads to smaller perceived phosphene)
-        self.sigma = self.deg2pix_coeff*torch.einsum('ij, ij -> ij', AC, 1/self.sigma_0.repeat(self.batch_size,1))
+        self.activation = stim #TODO: maybe multiply by constant? check!
+        self.sigma = 10*torch.ones_like(stim)
+        # # Bosking et al., 2017: AC = MD / (1 + np.exp(-slope*(I-I_50)))
+        # AC = self.MD / torch.add(torch.exp(-self.slope_stim*(stim-self.I_half)),1)
+        # # self.sigma = AC*self.sigma_0.repeat(self.batch_size,1) ### TODO: adjust temporal properties here, or not. Antonio thinks size is not affected by habituation, but rather seems to be due to using gaussians (lower intensity also leads to smaller perceived phosphene)
+        # self.sigma = self.deg2pix_coeff*torch.einsum('ij, ij -> ij', AC, 1/self.sigma_0.repeat(self.batch_size,1))
         if self.print_stats:
             print("sigma:")
             print(f"min:    {self.sigma.min()}")
             print(f"max:    {self.sigma.max()}")
             print(f"mean:   {self.sigma.mean()}")
             print(f"std:    {self.sigma.std()}")
-        if self.use_threshold:
-            self.SIGMOID = lambda x: 1 / (1 + torch.exp(-x))
-            self.SLOPE_FACTOR = lambda input, base, center: torch.pow(base,(input-center)/center)
-            self.THRESHOLD_FACTOR = lambda input, base, center: torch.pow(base,-(input-center)/center)
-
-            # Use psychometric curve to determine whether phosphenes are seen
-            slope_diff, threshold_diff = self.psychometricCurve(torch.ones_like(stim)*self.pw_default, torch.ones_like(stim)*self.freq_default, torch.ones_like(stim)*self.td_default) # TODO: these three parameters as input to this function, so it can be dynamic. An idea might be making a stimulation class...
-            slope = self.slope_thresh*slope_diff
-            threshold = self.threshold*threshold_diff # TODO: better names cause this is getting confusing
-            probs = self.SIGMOID(slope*(self.activation-threshold))
-            rands = torch.rand(probs.shape, device=self.device)
-            # print(rands.device,probs.device)
-            spikes = rands < probs
-            # spikes = self.activation > self.threshold
-            self.activation = spikes*self.activation  # TODO: effect of threshold over time: multiply here with activation, or with copy of activation (not sure how this works combined with the trace)
+        
         if self.print_stats:
             print("activation:")
             print(f"min:    {self.activation.min()}")
@@ -110,18 +86,6 @@ class GaussianSimulator(object):
         out = gaussian/gaussian.amax(dim=(2,3),keepdim=True) #normalize Gaussians
         return out
 
-    def psychometricCurve(self, pulse_width, frequency, train_duration):
-        pw_slope = self.SLOPE_FACTOR(pulse_width, self.pw_change,self.pw_default)
-        pw_threshold = self.THRESHOLD_FACTOR(pulse_width,self.pw_change,self.pw_default)
-
-        freq_slope = self.SLOPE_FACTOR(frequency,self.freq_change,self.freq_default)
-        freq_threshold = self.THRESHOLD_FACTOR(frequency,self.freq_change,self.freq_default)
-
-        td_slope = self.SLOPE_FACTOR(train_duration,self.td_change,self.td_default)
-        td_threshold = self.THRESHOLD_FACTOR(train_duration,self.td_change,self.td_default)
-
-        return pw_slope*freq_slope*td_slope, pw_threshold*freq_threshold*td_threshold
-
     def __call__(self,stim=None, img=None):
         """Return phosphenes (2d image) based on current stimulation and previous state (self.activation, self.trace, self.sigma)
         NOTE: either stimulation vector or input image (to sample from) must be provided!"""
@@ -142,21 +106,21 @@ class GaussianSimulator(object):
         # Return phosphenes
         return torch.einsum('ij, ijkl -> ikl', self.activation, phs)
 
-def get_deg2pix_coeff(display):
-    if not display:
-        print("assuming some standard values for display")
-        display = {
-            'screen_resolution'   : [1920,1080],
-            'screen_size'         : [294,166],
-            'dist_to_screen'      : 600
-        } 
+# def get_deg2pix_coeff(display):
+#     if not display:
+#         print("assuming some standard values for display")
+#         display = {
+#             'screen_resolution'   : [1920,1080],
+#             'screen_size'         : [294,166],
+#             'dist_to_screen'      : 600
+#         } 
 
-    screen_diagonal = np.sqrt(display['screen_size'][0]**2+display['screen_size'][1]**2)
-    screen_ppmm = np.sqrt(display['screen_resolution'][0]**2 + display['screen_resolution'][1]**2)/screen_diagonal
-    pixel_size = 1/screen_ppmm
-    deg_per_pixel = np.degrees(np.arctan(pixel_size/display['dist_to_screen']))
+#     screen_diagonal = np.sqrt(display['screen_size'][0]**2+display['screen_size'][1]**2)
+#     screen_ppmm = np.sqrt(display['screen_resolution'][0]**2 + display['screen_resolution'][1]**2)/screen_diagonal
+#     pixel_size = 1/screen_ppmm
+#     deg_per_pixel = np.degrees(np.arctan(pixel_size/display['dist_to_screen']))
 
-    return 1/deg_per_pixel
+#     return 1/deg_per_pixel
 
 
 def init_a_bit_less(args=None, n_phosphenes=32*32, resolution=(256,256), display=None, use_cuda=False):
@@ -168,51 +132,51 @@ def init_a_bit_less(args=None, n_phosphenes=32*32, resolution=(256,256), display
     USE_CUDA= use_cuda
 
     # Scaling factors and coefficients for realistic phosphene appearance
-    DEG2PIX_COEFF = get_deg2pix_coeff(display)
-    print(f"1 dva shown as {DEG2PIX_COEFF} pixels")
+    # DEG2PIX_COEFF = get_deg2pix_coeff(display)
+    # print(f"1 dva shown as {DEG2PIX_COEFF} pixels")
     
-    # Spatial phosphene characteristics
-    SAMPLE_RADIAL_DISTR  = lambda : np.random.rand()**2 ##### TODO: PLAUSIBLE SPATIAL DISTRIBUTION OF PHOSPHENES
-    ECCENTRICITY_SCALING = lambda r: 17.3/(0.75+r) #degrees per mm activated cortex, Horten & Hoyt
-    #DEG2PIX_COEFF*(SCALING_FACTOR*(EFF_ACTIVATION/(17.3/(0.75+r)))) #PLAUSIBLE CORTICAL MAGNIFICATION: Horten & Holt's formula
-    GABOR_ORIENTATION = lambda : np.random.rand()*2*math.pi #Rotation of ellips
+    # # Spatial phosphene characteristics
+    SAMPLE_RADIAL_DISTR  = lambda : np.random.rand()**1 ##### TODO: PLAUSIBLE SPATIAL DISTRIBUTION OF PHOSPHENES
+    ECCENTRICITY_SCALING = lambda r: 10#17.3/(0.75+r) #degrees per mm activated cortex, Horten & Hoyt
+    # # DEG2PIX_COEFF*(SCALING_FACTOR*(EFF_ACTIVATION/(17.3/(0.75+r)))) #PLAUSIBLE CORTICAL MAGNIFICATION: Horten & Holt's formula
+    # GABOR_ORIENTATION = lambda : np.random.rand()*2*math.pi #Rotation of ellips
 
     # Receptive field parameters (to generate activation mask)
     RECEPTIVE_FIELD_SIZE = 4
     USE_RELATIVE_RF_SIZE = True
 
-    if not args:
-        args = {
-        # processing images over time?
-        'video'             : False,
-        # habituation params
-        'intensity_decay'   : 0.4,
-        'input_effect'      : 1,
-        'trace_decay'       : 0.99997,
-        'trace_increase'    : 0.004,
-        # current strength effect on size (Bosking et al., 2017)
-        'MD'                : 0.7,  # predicted maximum diameter of activated cortex in mm
-        'slope_stim'        : 0.05,  # slope in mm/mu-A
-        'I_half'            : 20,  # mu-A
-        # Gabor filters
-        'gabor_filtering'   :True,
-        'gamma'             :1.5,  
-        # Stimulation threshold
-        'use_threshold'     :True,
-        'range_slope_thresh':(0.5,4),  # slope of psychometric curve
-        'range_thresh'      :(1,100),  # range of threshold values
-        # Pulse width (pw), frequency (freq) & train duration (td) input
-        # 'calibrated' values, deviation influences slope & theshold of psychometric curve 
-        'pw_default'        : 200,
-        'freq_default'      : 200,
-        'td_default'        : 125,
-        'pw_change'         : 1.5,
-        'freq_change'       : 1.5,
-        'td_change'         : 2.
-    }
+    # if not args:
+    #     args = {
+    #     # processing images over time?
+    #     'video'             : False,
+    #     # habituation params
+    #     'intensity_decay'   : 0.4,
+    #     'input_effect'      : 1,
+    #     'trace_decay'       : 0.99997,
+    #     'trace_increase'    : 0.004,
+    #     # current strength effect on size (Bosking et al., 2017)
+    #     'MD'                : 0.7,  # predicted maximum diameter of activated cortex in mm
+    #     'slope_stim'        : 0.05,  # slope in mm/mu-A
+    #     'I_half'            : 20,  # mu-A
+    #     # Gabor filters
+    #     'gabor_filtering'   :False,
+    #     'gamma'             :1.5,  
+    #     # Stimulation threshold
+    #     'use_threshold'     :False,
+    #     'range_slope_thresh':(0.5,4),  # slope of psychometric curve
+    #     'range_thresh'      :(1,100),  # range of threshold values
+    #     # Pulse width (pw), frequency (freq) & train duration (td) input
+    #     # 'calibrated' values, deviation influences slope & theshold of psychometric curve 
+    #     'pw_default'        : 200,
+    #     'freq_default'      : 200,
+    #     'td_default'        : 125,
+    #     'pw_change'         : 1.5,
+    #     'freq_change'       : 1.5,
+    #     'td_change'         : 2.
+    # }
 
-    args['print_stats'] = False #TODO: remove, for debugging purposes
-    args['deg2pix_coeff'] = DEG2PIX_COEFF
+    # args['print_stats'] = False #TODO: remove, for debugging purposes
+    # args['deg2pix_coeff'] = DEG2PIX_COEFF
     ###    
     ## 1. Generate phosphene mapping, sigmas and activation mask
     
@@ -230,14 +194,6 @@ def init_a_bit_less(args=None, n_phosphenes=32*32, resolution=(256,256), display
     # Sigma at start of simulation
     sigma_0 = torch.zeros(N_PHOSPHENES,device=device)
 
-    # Stimulation threshold for each electrode to elicit a phosphene
-    if args['use_threshold']:
-        threshold = torch.zeros(N_PHOSPHENES,device=device)
-        thresh_slope = torch.zeros(N_PHOSPHENES,device=device)
-    else:
-        threshold = None
-        thresh_slope = None
-
     for i in range(N_PHOSPHENES): ##TODO: I think this can be done without a for loop as a vector operation
 
         # Polar coordinates
@@ -250,33 +206,24 @@ def init_a_bit_less(args=None, n_phosphenes=32*32, resolution=(256,256), display
         y_offset = np.clip(int(y_offset),0,RESOLUTION[0]-1)
         
         # Calculate distance map for every element wrt center of phosphene
-        if args['gabor_filtering']:
-            theta = GABOR_ORIENTATION()
-            y = grid[0]-y_offset
-            x = grid[1]-x_offset
-            y_rotated = (-x * np.sin(theta)) + (y * np.cos(theta))
-            x_rotated = (x * np.cos(theta)) + (y * np.sin(theta))
-            pMap[i] = torch.sqrt(x_rotated**2 + (args['gamma']**2)*y_rotated**2)
-        else:
-            pMap[i] = torch.sqrt((grid[0]-y_offset)**2 + (grid[1]-x_offset)**2)
-
-        if args['use_threshold']:
-            threshold[i] = torch.tensor(args['range_thresh'][0]+(np.random.power(0.4)*(args['range_thresh'][1]-args['range_thresh'][0])))  # threshold dist based on Schmidt et al., 1996 
-            thresh_slope[i] = torch.tensor(np.random.uniform(low=args['range_slope_thresh'][0], high=args['range_slope_thresh'][1]))  # threshold dist based on Schmidt et al., 1996 
+        pMap[i] = torch.sqrt((grid[0]-y_offset)**2 + (grid[1]-x_offset)**2)
 
         sigma_0[i] = torch.tensor(ECCENTRICITY_SCALING(r/RESOLUTION[0])) 
 
     # Generate activation mask
     if USE_RELATIVE_RF_SIZE:
         # activation_mask = (pMap.permute(1,2,0) < sigma_0 * RECEPTIVE_FIELD_SIZE).permute(2,0,1).float()
-        activation_mask = (pMap.permute(1,2,0) < DEG2PIX_COEFF*(1*(1/sigma_0)) * RECEPTIVE_FIELD_SIZE).permute(2,0,1).float()
+        activation_mask = (pMap.permute(1,2,0) < 68*(1*(1/sigma_0)) * RECEPTIVE_FIELD_SIZE).permute(2,0,1).float()
     else: 
         activation_mask = (pMap < RECEPTIVE_FIELD_SIZE).float()
 
     print(f'device: {device}')
-    for key in args:
-        args[key] = torch.tensor([args[key]], dtype=torch.float, device=device)
+    # for key in args:
+    #     args[key] = torch.tensor([args[key]], dtype=torch.float, device=device)
 
+    threshold=None
+    thresh_slope=None
+    args={'dummy':0}
     return pMap,sigma_0, activation_mask, threshold, thresh_slope, args
 
 def init_simulator(args=None, n_phosphenes=32*32, resolution=(256,256), display=None, use_cuda=False):
@@ -289,7 +236,7 @@ def init_simulator(args=None, n_phosphenes=32*32, resolution=(256,256), display=
 
     # Scaling factors and coefficients for realistic phosphene appearance
     # EFF_ACTIVATION = 1 #diameter of the area in which neurons are activated - in theory this is in mm
-    DEG2PIX_COEFF = get_deg2pix_coeff(display)
+    DEG2PIX_COEFF = 68#get_deg2pix_coeff(display)
     print(f"1 dva shown as {DEG2PIX_COEFF} pixels")
     # SCALING_FACTOR = 0.31 #used to get realistic phosphene sizes, based on Vurro et al. 2014, although that's a thalamic prosthesis
 

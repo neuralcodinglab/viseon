@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 import time
 import datetime
 import logging
@@ -9,8 +10,7 @@ import torchvision
 import noise
 import pandas as pd
 import os 
-
-
+import argparse
 
 class Logger(object):
     def __init__(self,log_file='out.log'):
@@ -26,6 +26,63 @@ class Logger(object):
         #outputs to file
         self.logger.info(message)
 
+def get_args(args_list=None):
+    ap = argparse.ArgumentParser()
+
+    def none_or_str(value):
+        if value == 'None':
+            return None
+        return value
+    
+    ap.add_argument("-m", "--model_name", type=str, default="demo_model",
+                    help="model name")
+    ap.add_argument("-dir", "--savedir", type=str, default="./out/demo",
+                    help="directory for saving the model parameters and training statistics")
+    ap.add_argument("-s", "--seed", type=int, default=0,
+                    help="seed for random initialization")
+    ap.add_argument("-e", "--n_epochs", type=int, default=3,
+                    help="number of training epochs")   
+    ap.add_argument("-l", "--log_interval", type=int, default=10,
+                    help="number of batches after which to evaluate model (and logged)")   
+    ap.add_argument("-crit", "--convergence_crit", type=int, default=30,
+                    help="stop-criterion for convergence: number of evaluations after which model is not improved")   
+    ap.add_argument("-bin", "--binary_stimulation", type=bool, default=True,
+                    help="use quantized (binary) instead of continuous stimulation protocol")   
+    ap.add_argument("-sim", "--simulation_type", type=str, default="regular",
+                    help="'regular' or 'personalized' phosphene mapping") 
+    ap.add_argument("-in", "--input_channels", type=int, default=1,
+                    help="only grayscale (single channel) images are supported for now")   
+    ap.add_argument("-out", "--reconstruction_channels", type=int, default=1,
+                    help="only grayscale (single channel) images are supported for now")     
+    ap.add_argument("-act", "--out_activation", type=str, default="sigmoid",
+                    help="use 'sigmoid' for grayscale reconstructions, 'softmax' for boundary segmentation task")   
+    ap.add_argument("-d", "--dataset", type=str, default="characters",
+                    help="'charaters' dataset and 'ADE20K' are supported")   
+    ap.add_argument("-dev", "--device", type=str, default="cuda:0",
+                    help="e.g. use 'cpu' or 'cuda:0' ")   
+    ap.add_argument("-n", "--batch_size", type=int, default=30,
+                    help="'charaters' dataset and 'ADE20K' are supported")   
+    ap.add_argument("-opt", "--optimizer", type=str, default="adam",
+                    help="only 'adam' is supported for now")   
+    ap.add_argument("-lr", "--learning_rate", type=float, default=0.0001,
+                    help="Use higher learning rates for VGG-loss (perceptual reconstruction task)")  
+    ap.add_argument("-rl", "--reconstruction_loss", type=str, default='mse',
+                    help="'mse', 'VGG' or 'boundary' loss are supported ") 
+    ap.add_argument("-p", "--reconstruction_loss_param", type=float, default=0,
+                    help="In perceptual condition: the VGG layer depth, boundary segmentation: cross-entropy class weight") 
+    ap.add_argument("-L", "--sparsity_loss", type=none_or_str, default='L1',
+                    help="choose L1 or L2 type of sparsity loss (MSE or L1('taxidrivers') norm)") 
+    ap.add_argument("-repl", "--representation_loss", type=none_or_str, default=None,
+                    help="loss term between phosphene representation and input") 
+    ap.add_argument("-pr", "--representation_loss_param", type=float, default=0,
+                    help="vgg layer depth for representation loss")                
+    ap.add_argument("-k", "--kappa", type=float, default=0.01,
+                    help="sparsity weight parameter kappa")    
+
+    if args_list is not None:
+        return ap.parse_args(args_list)
+    else:
+        return ap.parse_args()
         
         
 def get_pMask(size=(256,256),phosphene_density=32,seed=1,jitter_amplitude=0,dropout=False,perlin_noise_scale=.4):
@@ -83,6 +140,41 @@ def plot_stats(stats):
     plt.show()
     return
 
+def full_fig(*tensors,title=None,classes=None): #img_tensor, phs_tensor, recon_tensor
+    # tensors = [img_tensor,phs_tensor,recon_tensor]
+    # images = np.zeros((3,img_tensor.shape[0],img_tensor.shape[1],img_tensor.shape[2],img_tensor.shape[3]))
+    fig = plt.figure(figsize=(5*len(tensors),5*tensors[0].shape[0]))
+
+    for i,t in enumerate(tensors):
+        # if t.min()<0:
+        #     if t.shape[1]==3:
+        #         normalizer = TensorNormalizer(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        #     elif img_tensor.shape[1]==1:
+        #         normalizer = TensorNormalizer(mean=0.459, std=0.227)
+        #     t = normalizer.undo(t)
+        
+        # Make numpy
+        img = t.detach().cpu().numpy()
+
+        for j in range(img.shape[0]):
+            ax = fig.add_subplot(len(tensors),img.shape[0],i*img.shape[0]+(j+1))
+
+            if type(title) is list:
+                fig.title(title[j])
+            elif title is not None and classes is not None:
+                fig.title(classes[title[j].item()])
+            if img.shape[1]==1 or len(img.shape)==3:
+                im = ax.imshow(np.squeeze(img[j]),cmap='gray',vmin=0,vmax=1)
+            elif img.shape[1]==2:    
+                im = ax.imshow(img[j][1],cmap='gray',vmin=0,vmax=1)
+            else:
+                im = ax.imshow(img[j].transpose(1,2,0))
+            ax.axis('off')
+            divider = make_axes_locatable(ax)
+            cax = divider.append_axes("right", size="5%", pad=0.05)
+            plt.colorbar(im, cax=cax)
+        fig.tight_layout(h_pad=1)
+    return fig
 
 # For basic plotting of images with labels as title
 def plot_images(img_tensor,title=None,classes=None):
@@ -117,6 +209,10 @@ def plot_images(img_tensor,title=None,classes=None):
     plt.show()
     return
 
+def log_gradients_in_model(model, model_name, logger, step):
+    for tag, value in model.named_parameters():
+        if value.grad is not None:
+            logger.add_histogram(f"{model_name}/{tag}", value.grad.cpu(), step)
 
 # To do (or undo) normalization on torch tensors
 class TensorNormalizer(object):

@@ -1,5 +1,6 @@
 import numpy as np
 import os
+import pickle
 from glob import glob
 import torch
 import torchvision
@@ -8,11 +9,11 @@ import torchvision.transforms as T
 import torchvision.transforms.functional as F
 import torchvision.datasets as ds
 import PIL
-from PIL import Image, ImageFont, ImageDraw 
+from PIL import Image, ImageFont, ImageDraw, ImageFilter 
 import cv2 as cv
 import string
 import utils
-
+from tqdm import tqdm
 
 class ADE_Dataset(Dataset):
     
@@ -22,41 +23,42 @@ class ADE_Dataset(Dataset):
                  grayscale = True,
                  normalize = True,
                  contour_labels = True,
-                 validation=False):
+                 validation=False,
+                 load_preprocessed=False):
         
         self.contour_labels = contour_labels
         self.normalize = normalize
         self.grayscale = grayscale
         self.device = device
+        # print('before first list comprehension')
+
         
-        # Collect files 
-        img_files, seg_files = [],[]
-        for path, subdirs, files in os.walk(os.path.join(directory,'images','training')):
-            img_files+= [files for files in glob(os.path.join(path,'*.jpg'))]
-            seg_files+= [files for files in glob(os.path.join(path,'*seg.png'))]
-        val_img_files, val_seg_files, = [],[]
-        for path, subdirs, files in os.walk(os.path.join(directory,'images','validation')):
-            val_img_files+= [files for files in glob(os.path.join(path,'*.jpg'))] 
-            val_seg_files+= [files for files in glob(os.path.join(path,'*seg.png'))]
-        for l in [img_files,seg_files,val_img_files,val_seg_files]:
-            l.sort()   
+
+        # img_files, seg_files = [],[]
+        # for path, subdirs, files in os.walk(os.path.join(directory,'images','training')):
+        #     img_files+= [files for files in glob(os.path.join(path,'*.jpg'))]
+        #     seg_files+= [files for files in glob(os.path.join(path,'*seg.png'))]
+        # val_img_files, val_seg_files, = [],[]
+        # for path, subdirs, files in os.walk(os.path.join(directory,'images','validation')):
+        #     val_img_files+= [files for files in glob(os.path.join(path,'*.jpg'))] 
+        #     val_seg_files+= [files for files in glob(os.path.join(path,'*seg.png'))]
+        # for l in [img_files,seg_files,val_img_files,val_seg_files]:
+        #     l.sort()   
         
-        # Image and target files
-        if validation:
-            self.input_files = val_img_files #[:6]
-            self.target_files = val_seg_files #[:6]
-        else:
-            self.input_files = img_files #[:6]
-            self.target_files = seg_files #[:6]
     
-    
+        contour = lambda im: im.filter(ImageFilter.FIND_EDGES).point(lambda p: p > 1 and 255) if self.contour_labels else im
+        # to_grayscale = lambda im: im.convert('L') if self.grayscale else im
+
         # Image and target tranformations (square crop and resize)
         self.img_transform = T.Compose([T.Lambda(lambda img:F.center_crop(img, min(img.size))),
                                         T.Resize(imsize),
-                                        T.ToTensor()])
+                                        T.ToTensor()
+                                        ])
         self.trg_transform = T.Compose([T.Lambda(lambda img:F.center_crop(img, min(img.size))),
-                                        T.Resize(imsize,interpolation=1),# Nearest Neighbour
-                                        T.ToTensor()])
+                                        T.Resize(imsize,interpolation=T.InterpolationMode.NEAREST), # Nearest Neighbour
+                                        T.Lambda(contour),
+                                        T.ToTensor()
+                                        ])
         
         # Normalize
         self.normalizer = T.Normalize(mean = [0.485, 0.456, 0.406],
@@ -67,41 +69,125 @@ class ADE_Dataset(Dataset):
         self.to_grayscale = lambda image:torch.sum(torch.stack([weights[c]*image[c,:,:] for c in range(3)],dim=0),
                                                    dim=0,
                                                    keepdim=True)
-
-        # Transform sem. seg. to contour labels
-        to_grayscale = self.to_grayscale #lambda image : image.mean(axis=0,keepdims=True)
-        to_cv2_list  = lambda image_tensor : [np.squeeze((255*img.cpu().numpy())).astype('uint8') for img in image_tensor]
-        canny_edge   = lambda image_list : [cv.Canny(img,10,10)/255 for img in image_list]
-        to_tensor    = lambda image_list : torch.tensor(image_list, dtype=torch.long)
-        squeeze_img  = lambda image_tensor : torch.squeeze(image_tensor)
-        self.contour = T.Compose([T.Lambda(to_grayscale),
-                                  T.Lambda(to_cv2_list),
-                                  T.Lambda(canny_edge),
-                                  T.Lambda(to_tensor),
-                                  T.Lambda(squeeze_img)])
         
+        # Transform sem. seg. to contour labels
+        # to_grayscale = self.to_grayscale #lambda image : image.mean(axis=0,keepdims=True)
+        # to_cv2_list  = lambda image_tensor : [np.squeeze((255*img.cpu().numpy())).astype('uint8') for img in image_tensor]
+        # canny_edge   = lambda image_list : [cv.Canny(img,10,10)/255 for img in image_list]
+        # to_tensor    = lambda image_list : torch.tensor(np.array(image_list), dtype=torch.long)
+        # squeeze_img  = lambda image_tensor : torch.squeeze(image_tensor)
+        # self.contour = T.Compose([T.Lambda(to_grayscale),
+        #                           T.Lambda(to_cv2_list),
+        #                           T.Lambda(canny_edge),
+        #                           T.Lambda(to_tensor),
+        #                           T.Lambda(squeeze_img)])
+
+
+        # contour_fun = lambda im: im.filter(ImageFilter.FIND_EDGES).point(lambda p: p > 1 and 255)
+        # gray_resize = lambda im: im.convert("L").resize((128,128))
+
+        
+        # center_crop = lambda img:F.center_crop(img, min(img.size))
+        # self.trg_transform = T.Compose([T.Lambda(center_crop),
+        #                                 T.Resize(imsize,interpolation=Image.NEAREST),# Nearest Neighbour
+        #                                 T.Lambda(contour),
+        #                                 T.ToTensor()])
+
+        # self.contour = T.Compose([T.Lambda(contour_fun), T.Lambda(gray_resize)])
+
+        self.inputs = []
+        self.targets = []
+        
+        val_path = '_val' if validation else '_train'
+        path = directory+'processed'+val_path
+        if load_preprocessed:
+            self.load(path)
+            print('----Loaded preprocessed data----')
+            print(f'input length: {len(self.inputs)} samples')
+            # self.inputs = self.inputs[:10000]
+            # self.targets = self.targets[:10000]
+        else:
+            # Collect files 
+            img_files, seg_files = [],[]
+            print('----Listing training images----')
+            for path, subdirs, files in tqdm(os.walk(os.path.join(directory,'images','training'))):
+            # for path, subdirs, files in os.walk(os.path.join(directory,'training')):
+                img_files+= glob(os.path.join(path,'*.jpg'))
+                seg_files+= glob(os.path.join(path,'*seg.png'))
+                val_img_files, val_seg_files, = [],[]
+            print('----Listing validation images----')
+            for path, subdirs, files in tqdm(os.walk(os.path.join(directory,'images','validation'))):
+            # for path, subdirs, files in os.walk(os.path.join(directory,'validation')):
+                val_img_files+= glob(os.path.join(path,'*.jpg'))
+                val_seg_files+= glob(os.path.join(path,'*seg.png'))
+            for l in [img_files,seg_files,val_img_files,val_seg_files]:
+                l.sort()
+
+            print('Finished listing files')
+            # Image and target files
+            if validation:
+                self.input_files = val_img_files
+                self.target_files = val_seg_files
+            else:
+                self.input_files = img_files
+                self.target_files = seg_files
+
+            print('----Preprocessing ADE20K input----')
+            for image, target in tqdm(zip(self.input_files, self.target_files),total=len(self.input_files)):
+                im = Image.open(image).convert('RGB')
+                t = Image.open(target).convert('L')
+
+                # Crop, resize & transform
+                x = self.img_transform(im)
+                t = self.trg_transform(t)
+                                            
+                # Additional tranforms:
+                if self.normalize:
+                    x = self.normalizer(x)
+                if self.grayscale:
+                    x = self.to_grayscale(x)
+
+                self.inputs += [x]
+                self.targets += [t]
+            print('----Finished preprocessing----')
+            self.save(path)
+
+    def save(self,path):
+        with open(path+'_inputs.pkl','wb') as f:
+            pickle.dump(self.inputs,f)
+        with open(path+'_targets.pkl','wb') as f:
+            pickle.dump(self.targets,f)
+
+    def load(self,path):
+        with open(path+'_inputs.pkl','rb') as f:
+            self.inputs = pickle.load(f)
+        with open(path+'_targets.pkl','rb') as f:
+            self.targets = pickle.load(f)
+
     def __len__(self):
-        return len(self.input_files)
+        return len(self.inputs)
 
     def __getitem__(self, i):
         
-        # Load Image, Label
-        x = Image.open(self.input_files[i]).convert('RGB')
-        t = Image.open(self.target_files[i])
+        x = self.inputs[i]
+        t = self.targets[i]
+        # # Load Image, Label
+        # x = Image.open(self.input_files[i]).convert('RGB')
+        # t = Image.open(self.target_files[i])
         
 
         
-        # Crop and resize
-        x = self.img_transform(x)
-        t = self.trg_transform(t)
+        # # Crop and resize
+        # x = self.img_transform(x)
+        # t = self.trg_transform(t)
                                       
-        # Additional tranforms:
-        if self.normalize:
-            x = self.normalizer(x)
-        if self.contour_labels:
-            t = self.contour(t)
-        if self.grayscale:
-            x = self.to_grayscale(x)
+        # # Additional tranforms:
+        # if self.normalize:
+        #     x = self.normalizer(x)
+        # if self.contour_labels:
+        #     t = self.contour(t)
+        # if self.grayscale:
+        #     x = self.to_grayscale(x)
         
 
             
@@ -180,3 +266,4 @@ class Character_Dataset(Dataset):
         if self.invert:
             img = 1-img
         return img.to(self.device), lbl.to(self.device)
+

@@ -6,10 +6,12 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import math
+from tqdm import tqdm
 
 # Local dependencies
 import model,utils
 import local_datasets
+from simulator import init_a_bit_less
 
 # PyTorch
 import torch
@@ -110,22 +112,27 @@ def initialize_components(cfg):
                                         binary_stimulation=cfg.binary_stimulation).to(cfg.device)
     models['decoder'] = model.E2E_Decoder(out_channels=cfg.reconstruction_channels,
                                         out_activation=cfg.out_activation).to(cfg.device)
-    if cfg.simulation_type == 'regular':
-        pMask = utils.get_pMask(jitter_amplitude=0,dropout=False) # phosphene mask with regular mapping
-    elif cfg.simulation_type == 'personalized':
-        pMask = utils.get_pMask(seed=1,jitter_amplitude=.5,dropout=True,perlin_noise_scale=.4) # pers. phosphene mask
-    models['simulator'] = model.E2E_PhospheneSimulator(pMask=pMask.to(cfg.device),
-                                                           sigma=1.5,
-                                                           intensity=15,
-                                                           device=cfg.device).to(cfg.device)
+
+    if cfg.simulation_type == 'realistic':
+        pMap,sigma_0, activation_mask, threshold, thresh_slope, args = init_a_bit_less(use_cuda=True)
+        models['simulator'] = model.E2E_RealisticPhospheneSimulator(pMap,sigma_0, activation_mask, threshold, thresh_slope, args, device=cfg.device).to(cfg.device)
+    else:
+        if cfg.simulation_type == 'regular':
+            pMask = utils.get_pMask(jitter_amplitude=0,dropout=False) # phosphene mask with regular mapping
+        elif cfg.simulation_type == 'personalized':
+            pMask = utils.get_pMask(seed=1,jitter_amplitude=.5,dropout=True,perlin_noise_scale=.4) # pers. phosphene mask
+        models['simulator'] = model.E2E_PhospheneSimulator(pMask=pMask.to(cfg.device),
+                                                            sigma=1.5,
+                                                            intensity=15,
+                                                            device=cfg.device).to(cfg.device)
 
     # Dataset
     dataset = dict()
     if cfg.dataset == 'characters':
-        trainset = local_datasets.Character_Dataset(device=cfg.device)
+        trainset = local_datasets.Character_Dataset(device=cfg.device,directory='./datasets/Characters')
         valset = local_datasets.Character_Dataset(device=cfg.device,validation = True) 
     elif cfg.dataset == 'ADE20K':
-        trainset = local_datasets.ADE_Dataset(device=cfg.device)
+        trainset = local_datasets.ADE_Dataset(device=cfg.device,directory='./datasets/Characters')
         valset = local_datasets.ADE_Dataset(device=cfg.device,validation=True)
     dataset['trainloader'] = DataLoader(trainset,batch_size=int(cfg.batch_size),shuffle=True)
     dataset['valloader'] = DataLoader(valset,batch_size=int(cfg.batch_size),shuffle=False)
@@ -199,10 +206,12 @@ def train(models, dataset, optimization, train_settings):
     ## C. Training Loop
     n_not_improved = 0
     for epoch in range(n_epochs):  # loop over the dataset multiple times
-
+        count_samples=1
+        count_val=1
+        count_backwards=1
         logger('Epoch %d' % (epoch+1))
 
-        for i, data in enumerate(trainloader, 0):
+        for i, data in enumerate(tqdm(trainloader), 0):
             image,label = data
 
             # TRAINING
@@ -213,85 +222,96 @@ def train(models, dataset, optimization, train_settings):
 
             # 1. Forward pass
             stimulation = encoder(image)
+            print(f"stimulation: {stimulation.shape}")
             phosphenes  = simulator(stimulation)
+            print(f"phosphenes: {phosphenes.shape}")
             reconstruction = decoder(phosphenes)
-
+            print(f"reconstruction: {reconstruction.shape}")
+            print(f"passed sample through models {count_samples} times")
+            count_samples+=1
             # 2. Calculate loss
             loss = loss_function(image=image,
                                  label=label,
                                  stimulation=encoder.out,
                                  phosphenes=phosphenes,
                                  reconstruction=reconstruction)
-
+            print("calculated loss")
             # 3. Backpropagation
             loss.backward()
             encoder_optim.step()
             decoder_optim.step()
-
+            print(f"optimizer step {count_backwards}")
+            count_backwards+=1
 
             # VALIDATION
-            if i==len(trainloader) or i % log_interval == (log_interval-1):
-                image,label = next(iter(valloader))
+            if i==len(trainloader) or i % log_interval == 0:
+                print(f"{count_val} times in validation loop")
+                count_val+=1
+                try:
+                    image,label = next(iter(valloader))
+                    print(label)
 
-                encoder.eval()
-                decoder.eval()
+                    encoder.eval()
+                    decoder.eval()
 
-                with torch.no_grad():
+                    with torch.no_grad():
 
-                    # 1. Forward pass
-                    stimulation = encoder(image)
-                    phosphenes  = simulator(stimulation)
-                    reconstruction = decoder(phosphenes)            
+                        # 1. Forward pass
+                        stimulation = encoder(image)
+                        phosphenes  = simulator(stimulation)
+                        reconstruction = decoder(phosphenes)            
 
-                    # 2. Loss
-                    stats = loss_function(image=image,
-                                          label=label,
-                                          stimulation=encoder.out,
-                                          phosphenes=phosphenes,
-                                          reconstruction=reconstruction,
-                                          validation=True)            
-                               
-                # 3. Logging
-                logstats = ' | '.join('%s : %.3f' %(key,stats[key][-1]) for key in stats) 
-                logger('[%d, %5d] %s' %(epoch,i + 1, logstats))
-                with open(csvpath, 'a') as csvfile:
-                    writer = csv.writer(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
-                    writer.writerow([epoch,i + 1]+[stats[key][-1] for key in stats])                
+                        # 2. Loss
+                        stats = loss_function(image=image,
+                                            label=label,
+                                            stimulation=encoder.out,
+                                            phosphenes=phosphenes,
+                                            reconstruction=reconstruction,
+                                            validation=True)            
+                                
+                    # 3. Logging
+                    logstats = ' | '.join('%s : %.3f' %(key,stats[key][-1]) for key in stats) 
+                    logger('[%d, %5d] %s' %(epoch,i + 1, logstats))
+                    with open(csvpath, 'a') as csvfile:
+                        writer = csv.writer(csvfile, delimiter=',', quotechar='|', quoting=csv.QUOTE_MINIMAL)
+                        writer.writerow([epoch,i + 1]+[stats[key][-1] for key in stats])                
 
-                # 4. Visualization
-                plt.figure(figsize=(10,10),dpi=50)
-                utils.plot_stats(stats)
-                plt.figure(figsize=(10,10),dpi=50)
-                utils.plot_images(image[:5])
-                plt.figure(figsize=(10,10),dpi=50)
-                utils.plot_images(phosphenes[:5])
-                plt.figure(figsize=(10,10),dpi=50)
-                utils.plot_images(reconstruction[:5])
-                if len(label.shape)>1:
+                    # 4. Visualization
                     plt.figure(figsize=(10,10),dpi=50)
-                    utils.plot_images(label[:5])    
-                
-                # 5. Save model (if best)
-                if  np.argmin(stats['val_total_loss'])+1==len(stats['val_total_loss']):
-                    savepath = os.path.join(savedir,model_name + '_best_encoder.pth' )#'_e%d_encoder.pth' %(epoch))#,i))
-                    logger('Saving to ' + savepath + '...')
-                    torch.save(encoder.state_dict(), savepath)
-
-                    savepath = os.path.join(savedir,model_name + '_best_decoder.pth' )#'_e%d_decoder.pth' %(epoch))#,i))
-                    logger('Saving to ' + savepath + '...')
-                    torch.save(decoder.state_dict(), savepath)
+                    utils.plot_stats(stats)
+                    plt.figure(figsize=(10,10),dpi=50)
+                    utils.plot_images(image[:5])
+                    plt.figure(figsize=(10,10),dpi=50)
+                    utils.plot_images(phosphenes[:5])
+                    plt.figure(figsize=(10,10),dpi=50)
+                    utils.plot_images(reconstruction[:5])
+                    if len(label.shape)>1:
+                        plt.figure(figsize=(10,10),dpi=50)
+                        utils.plot_images(label[:5])    
                     
-                    n_not_improved = 0
-                else:
-                    n_not_improved = n_not_improved + 1
-                    logger('not improved for %5d iterations' % n_not_improved) 
-                    if n_not_improved>converg_crit:
-                        break
+                    # 5. Save model (if best)
+                    if  np.argmin(stats['val_total_loss'])+1==len(stats['val_total_loss']):
+                        savepath = os.path.join(savedir,model_name + '_best_encoder.pth' )#'_e%d_encoder.pth' %(epoch))#,i))
+                        logger('Saving to ' + savepath + '...')
+                        torch.save(encoder.state_dict(), savepath)
 
-                # 5. Prepare for next iteration
-                encoder.train()
-                decoder.train()            
+                        savepath = os.path.join(savedir,model_name + '_best_decoder.pth' )#'_e%d_decoder.pth' %(epoch))#,i))
+                        logger('Saving to ' + savepath + '...')
+                        torch.save(decoder.state_dict(), savepath)
+                        
+                        n_not_improved = 0
+                    else:
+                        n_not_improved = n_not_improved + 1
+                        logger('not improved for %5d iterations' % n_not_improved) 
+                        if n_not_improved>converg_crit:
+                            break
 
+                    # 5. Prepare for next iteration
+                    encoder.train()
+                    decoder.train()            
+
+                except StopIteration:
+                    pass
         if n_not_improved>converg_crit:
             break
     logger('Finished Training')
@@ -334,7 +354,7 @@ if __name__ == '__main__':
     ap.add_argument("-n", "--batch_size", type=int, default=30,
                     help="'charaters' dataset and 'ADE20K' are supported")   
     ap.add_argument("-opt", "--optimizer", type=str, default="adam",
-                    help="only 'adam' is supporte for now")   
+                    help="only 'adam' is supported for now")   
     ap.add_argument("-lr", "--learning_rate", type=float, default=0.0001,
                     help="Use higher learning rates for VGG-loss (perceptual reconstruction task)")  
     ap.add_argument("-rl", "--reconstruction_loss", type=str, default='mse',

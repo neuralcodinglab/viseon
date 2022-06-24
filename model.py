@@ -8,7 +8,8 @@ import torchvision
 from torchvision import transforms
 import cv2 as cv
 
-
+from simulator import GaussianSimulator
+from utils import RGBConverter
 
 
 def convlayer(n_input, n_output, k_size=3, stride=1, padding=1, resample_out=None):
@@ -63,6 +64,37 @@ class VGG_Feature_Extractor(object):
             assert image.shape[1]==3
             return self.feature_extractor(image)    
     
+class Simple_Encoder(nn.Module):
+    def __init__(self, in_channels=1, out_channels=1):
+        super(Simple_Encoder, self).__init__()
+        
+        # Model
+        self.model = nn.Sequential(*convlayer(in_channels,8,3,1,1),
+                                   *convlayer(8,16,3,1,1,resample_out=nn.MaxPool2d(2)),
+                                   *convlayer(16,32,3,1,1,resample_out=nn.MaxPool2d(2)),
+                                   *convlayer(32,16,3,1,1),
+                                   nn.Flatten(),
+                                   nn.Linear(1024,1024),
+                                   nn.ReLU(),
+                                   nn.Linear(1024,1024),
+                                   nn.ReLU()
+                                #    nn.Softplus() #TODO: non-binary stimulation 
+                                #    nn.Tanh()
+                                #    nn.Sigmoid()
+                                )
+
+    def forward(self, x):
+        self.out = self.model(x)
+        # x = self.out
+        if self.binary_stimulation:
+            x = x + torch.sign(x).detach() - x.detach() # (self-through estimator) #TODO: non-binary stimulation 
+            
+        # stimulation = .5*(x+1) #why?
+        # stimulation = stimulation*50.
+        stimulation = self.out
+        
+        return stimulation
+
 class E2E_Encoder(nn.Module):
     """
     Simple non-generic encoder class that receives 128x128 input and outputs 32x32 feature map as stimulation protocol
@@ -81,14 +113,25 @@ class E2E_Encoder(nn.Module):
                                    ResidualBlock(32, resample_out=None),
                                    ResidualBlock(32, resample_out=None),
                                    *convlayer(32,16,3,1,1),
-                                   nn.Conv2d(16,out_channels,3,1,1),  
-                                   nn.Tanh())
+                                   nn.Conv2d(16,out_channels,3,1,1),
+                                   nn.Flatten(),
+                                   nn.Linear(1024,1024),
+                                   nn.ReLU()
+                                #    nn.Softplus() #TODO: non-binary stimulation 
+                                #    nn.Tanh()
+                                #    nn.Sigmoid()
+                                )
+
     def forward(self, x):
         self.out = self.model(x)
-        x = self.out
+        # x = self.out
         if self.binary_stimulation:
-            x = x + torch.sign(x).detach() - x.detach() # (self-through estimator)
-        stimulation = .5*(x+1)
+            x = x + torch.sign(x).detach() - x.detach() # (self-through estimator) #TODO: non-binary stimulation 
+            
+        # stimulation = .5*(x+1) #why?
+        # stimulation = stimulation*50.
+        stimulation = self.out
+        
         return stimulation    
     
 class E2E_Decoder(nn.Module):
@@ -121,7 +164,30 @@ class E2E_Decoder(nn.Module):
     def forward(self, x):
         return self.model(x)    
     
-    
+class E2E_RealisticPhospheneSimulator(nn.Module):
+    """A realistic simulator, using stimulation vectors to form a phosphene representation
+    in: a 32x32 stimulation vector #TODO: flatten before inputting?
+    out: 256x256 phosphene representation
+    """
+    def __init__(self, pMap,sigma_0, activation_mask, threshold, thresh_slope, args, device=torch.device('cuda:0')):
+    #pMask,scale_factor=8, sigma=1.5,kernel_size=11, intensity=15, device=torch.device('cuda:0')):
+        super(E2E_RealisticPhospheneSimulator, self).__init__()
+        
+        # use_cuda = False if device == 'cpu' else True
+
+        self.simulator = GaussianSimulator(pMap, sigma_0, activation_mask, threshold, thresh_slope, **args)
+
+    def forward(self, stimulation):
+        # stim = stimulation.flatten(start_dim=1)
+        # print(f"stim shape before entering simulator: {stimulation.shape}")
+        phosphenes = self.simulator(stim=stimulation*100).clamp(0,150)
+        # print(f"phosphene shape after flatten: {phosphenes.shape}")
+        phosphenes = phosphenes/150  #phosphenes.max()
+        
+        phosphenes = phosphenes.view(phosphenes.shape[0], 1, phosphenes.shape[1], phosphenes.shape[2])
+        return phosphenes
+
+
 class E2E_PhospheneSimulator(nn.Module):
     """ Uses three steps to convert  the stimulation vectors to phosphene representation:
     1. Resizes the feature map (default: 32x32) to SVP template (256x256)
