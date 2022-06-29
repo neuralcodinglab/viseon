@@ -1,0 +1,70 @@
+# run settings
+run:
+  resolution: [256,256] #[width,height] in pixels
+  view_angle: 20 #in degrees, horizontal view angle
+  fps: 35
+  gpu: null #if using cuda, enter gpu nr here (e.g. 0)
+  video: False
+  print_stats: True
+
+# display specs to accurately diplay sizes in dva
+display:
+  screen_resolution: [1920,1080] #width & height in pixels
+  #screen_size: [294,166] #width & height in mm
+  screen_diagonal: 13.3 #inches
+  dist_to_screen: 600 # eyes to screen in mm
+
+# for sampling from images/video
+sampling:
+  RF_size: 0.4 #mm cortex 
+  use_relative_RF_size: True
+  filter: sobel #canny or sobel
+  T_high: 120 # in case of canny filtering: the high threshold
+  sampling_method: receptive_fields #receptive_fields or center
+  
+# settings for electrode coords to visual field coords
+cortex_model:
+  model: monopole
+  k: 17.3
+  a: 0.75
+  b: null
+  alpha: null
+  dropout_rate: 0.0
+  noise_scale: 0.0
+  
+# habituation and other temporal dynamics  
+temporal_dynamics:
+  activation_decay_rate: 32.1
+  input_effect: 1
+  trace_slow_decay_rate: 0.001 #decay of slow memory trace per second
+  trace_slow_increase_rate: 0.14 # how much the trace increases when there is input, per second
+  trace_fast_decay_rate: 7.81 #decay of fast memory trace per second
+  trace_fast_increase_rate: 1.4 # how much the trace increases when there is input, per second
+
+# current strength effect on size (Bosking et al., 2017),   
+size_saturation:
+  MD: 0.7  # predicted maximum diameter of activated cortex in mm
+  I_half: 40 # mu-A
+  slope_size: 0.08 # slope of size saturation curve in mm/mu-A
+  current_spread: 675.e-6 #A/mm2
+
+# sigmoid on activation  
+brightness_saturation:
+  cps_half: 2.8e-6 #nC/s, calibrated on fig. 6A Fernández et al., (2021) 
+  slope_brightness: 0.2e+7 #0.4e+6 (for tanh) #calibrated on fig. 6A/B Fernández et al., (2021)
+  
+# Stimulation threshold
+thresholding:
+  use_threshold: True
+  range_slope: [0.1e+7,0.5e+7] #slope of psychometric curve
+  range_thresh: [0.7e-6,5.8e-6] #range of threshold values in charge per second, Fernández's mean threshold +/- two standard deviations
+        
+# Pulse width (pw), frequency (freq) default values, in case they aren't specified in the input
+default_stim:
+  pw_default: 170.e-6 #microS
+  freq_default: 300 #Hertz
+    
+# Gabor filters
+gabor:
+  gabor_filtering: False
+  gamma: 1.5  

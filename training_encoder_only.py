@@ -11,7 +11,7 @@ from tqdm import tqdm
 # Local dependencies
 import model,utils
 import local_datasets
-from simulator import init_a_bit_less
+from simulator.simulator import init_a_bit_less
 
 from loss_functions import CustomLoss,Representation_Loss
 

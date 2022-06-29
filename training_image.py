@@ -10,7 +10,9 @@ from tqdm import tqdm
 # Local dependencies
 import model,utils
 import local_datasets
-from simulator import init_a_bit_less
+from simulator.simulator import GaussianSimulator
+from simulator.init import init_probabilistically
+from simulator.utils import load_params
 
 from loss_functions import CustomLoss
 
@@ -45,8 +47,10 @@ def initialize_components(cfg):
 
     use_cuda = False if cfg.device=='cpu' else True
     if cfg.simulation_type == 'realistic':
-        pMap,sigma_0, activation_mask, threshold, thresh_slope, args = init_a_bit_less(use_cuda=use_cuda)
-        models['simulator'] = model.E2E_RealisticPhospheneSimulator(pMap,sigma_0, activation_mask, threshold, thresh_slope, args, device=cfg.device).to(cfg.device)
+        # pMap,sigma_0, activation_mask, threshold, thresh_slope, args = init_a_bit_less(use_cuda=use_cuda)
+        params = load_params('simulator/config/params.yaml')
+        r, phi = init_probabilistically(params,n_phosphenes=500)
+        models['simulator'] = model.E2E_RealisticPhospheneSimulator(params, r, phi).to(cfg.device)
     else:
         if cfg.simulation_type == 'regular':
             pMask = utils.get_pMask(jitter_amplitude=0,dropout=False) # phosphene mask with regular mapping

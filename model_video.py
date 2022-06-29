@@ -1,3 +1,4 @@
+from turtle import forward
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -11,8 +12,37 @@ import cv2 as cv
 from simulator.simulator import GaussianSimulator
 from utils import RGBConverter
 
+##TODO: remove, just for convenience and debugging
+class PrintLayer(nn.Module):
+    def __init__(self):
+        super(PrintLayer, self).__init__()
+    
+    def forward(self, x):
+        # Do your print / debug stuff here
+        print(x.shape)
+        return x
 
-def convlayer(n_input, n_output, k_size=3, stride=1, padding=1, resample_out=None):
+def convlayer3d(n_input, n_output, k_size=3, stride=1, padding=1, resample_out=None):
+    layer = [
+        nn.Conv3d(n_input, n_output, kernel_size=k_size, stride=stride, padding=padding, bias=False),
+        nn.BatchNorm3d(n_output),
+        nn.LeakyReLU(inplace=True),
+        resample_out]
+    if resample_out is None:
+        layer.pop()
+    return layer 
+
+def deconvlayer3d(n_input, n_output, k_size=2, stride=2, padding=0, dilation=1, resample_out=None):
+    layer = [
+        nn.ConvTranspose3d(n_input, n_output, kernel_size=k_size, stride=stride, padding=padding, dilation=dilation, bias=False),
+        nn.BatchNorm3d(n_output),
+        nn.LeakyReLU(inplace=True),
+        resample_out]
+    if resample_out is None:
+        layer.pop()
+    return layer
+
+def convlayer2d(n_input, n_output, k_size=3, stride=1, padding=1, resample_out=None):
     layer = [
         nn.Conv2d(n_input, n_output, kernel_size=k_size, stride=stride, padding=padding, bias=False),
         nn.BatchNorm2d(n_output),
@@ -22,10 +52,32 @@ def convlayer(n_input, n_output, k_size=3, stride=1, padding=1, resample_out=Non
         layer.pop()
     return layer  
 
-
-class ResidualBlock(nn.Module):
+class ResidualBlock3d(nn.Module):
     def __init__(self, n_channels, stride=1, resample_out=None):
-        super(ResidualBlock, self).__init__()
+        super(ResidualBlock3d, self).__init__()
+        self.conv1 = nn.Conv3d(n_channels, n_channels,kernel_size=3, stride=1,padding=1)
+        self.bn1 = nn.BatchNorm3d(n_channels)
+        self.relu = nn.LeakyReLU(inplace=True)
+        self.conv2 = nn.Conv3d(n_channels, n_channels,kernel_size=3, stride=1,padding=1)
+        self.bn2 = nn.BatchNorm3d(n_channels)
+        self.resample_out = resample_out
+        
+    def forward(self, x):
+        residual = x
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out += residual
+        out = self.relu(out)
+        if self.resample_out:
+            out = self.resample_out(out)
+        return out
+
+class ResidualBlock2d(nn.Module):
+    def __init__(self, n_channels, stride=1, resample_out=None):
+        super(ResidualBlock2d, self).__init__()
         self.conv1 = nn.Conv2d(n_channels, n_channels,kernel_size=3, stride=1,padding=1)
         self.bn1 = nn.BatchNorm2d(n_channels)
         self.relu = nn.LeakyReLU(inplace=True)
@@ -63,37 +115,6 @@ class VGG_Feature_Extractor(object):
         else:
             assert image.shape[1]==3
             return self.feature_extractor(image)    
-    
-class Simple_Encoder(nn.Module):
-    def __init__(self, in_channels=1, out_channels=1):
-        super(Simple_Encoder, self).__init__()
-        
-        # Model
-        self.model = nn.Sequential(*convlayer(in_channels,8,3,1,1),
-                                   *convlayer(8,16,3,1,1,resample_out=nn.MaxPool2d(2)),
-                                   *convlayer(16,32,3,1,1,resample_out=nn.MaxPool2d(2)),
-                                   *convlayer(32,16,3,1,1),
-                                   nn.Flatten(),
-                                   nn.Linear(1024,1024),
-                                   nn.ReLU(),
-                                   nn.Linear(1024,1024),
-                                   nn.ReLU()
-                                #    nn.Softplus() #TODO: non-binary stimulation 
-                                #    nn.Tanh()
-                                #    nn.Sigmoid()
-                                )
-
-    def forward(self, x):
-        self.out = self.model(x)
-        # x = self.out
-        if self.binary_stimulation:
-            x = x + torch.sign(x).detach() - x.detach() # (self-through estimator) #TODO: non-binary stimulation 
-            
-        # stimulation = .5*(x+1) #why?
-        # stimulation = stimulation*50.
-        stimulation = self.out
-        
-        return stimulation
 
 class E2E_Encoder(nn.Module):
     """
@@ -105,14 +126,14 @@ class E2E_Encoder(nn.Module):
         self.binary_stimulation = binary_stimulation
         
         # Model
-        self.model = nn.Sequential(*convlayer(in_channels,8,3,1,1),
-                                   *convlayer(8,16,3,1,1,resample_out=nn.MaxPool2d(2)),
-                                   *convlayer(16,32,3,1,1,resample_out=nn.MaxPool2d(2)),
-                                   ResidualBlock(32, resample_out=None),
-                                   ResidualBlock(32, resample_out=None),
-                                   ResidualBlock(32, resample_out=None),
-                                   ResidualBlock(32, resample_out=None),
-                                   *convlayer(32,16,3,1,1),
+        self.model = nn.Sequential(*convlayer2d(in_channels,8,3,1,1),
+                                   *convlayer2d(8,16,3,1,1,resample_out=nn.MaxPool2d(2)),
+                                   *convlayer2d(16,32,3,1,1,resample_out=nn.MaxPool2d(2)),
+                                   ResidualBlock2d(32, resample_out=None),
+                                   ResidualBlock2d(32, resample_out=None),
+                                   ResidualBlock2d(32, resample_out=None),
+                                   ResidualBlock2d(32, resample_out=None),
+                                   *convlayer2d(32,16,3,1,1),
                                    nn.Conv2d(16,out_channels,3,1,1),
                                    nn.Flatten(),
                                    nn.Linear(1024,1024),
@@ -150,65 +171,149 @@ class E2E_Decoder(nn.Module):
                                'softmax':nn.Softmax(dim=1)}[out_activation]
         
         # Model
-        self.model = nn.Sequential(*convlayer(in_channels,16,3,1,1),
-                                   *convlayer(16,32,3,1,1),
-                                   *convlayer(32,64,3,2,1),
-                                   ResidualBlock(64),
-                                   ResidualBlock(64),
-                                   ResidualBlock(64),
-                                   ResidualBlock(64),
-                                   *convlayer(64,32,3,1,1),
+        self.model = nn.Sequential(*convlayer2d(in_channels,16,3,1,1),
+                                   *convlayer2d(16,32,3,1,1),
+                                   *convlayer2d(32,64,3,2,1),
+                                   ResidualBlock2d(64),
+                                   ResidualBlock2d(64),
+                                   ResidualBlock2d(64),
+                                   ResidualBlock2d(64),
+                                   *convlayer2d(64,32,3,1,1),
+                                   nn.Conv2d(32,out_channels,3,1,1), 
+                                   self.out_activation)       
+
+    def forward(self, x):
+        return self.model(x)  
+
+class ZhaoEncoder(nn.Module):
+    def __init__(self, in_channels=3, out_channels=1):
+        super(ZhaoEncoder, self).__init__()
+
+        self.model = nn.Sequential(
+            *convlayer3d(in_channels,32,3,1,1, resample_out=nn.MaxPool3d(2,(0,2,2),dilation=(0,1,1))),
+            *convlayer3d(32,48,3,1,1, resample_out=nn.MaxPool3d(2,(0,2,2),dilation=(0,1,1))),
+            *convlayer3d(48,64,3,1,1),#, resample_out=nn.MaxPool3d(2,(0,2,2),dilation=(0,1,1))),
+            *convlayer3d(64,64,3,1,1),
+            # nn.Conv3d(64,out_channels,3,1,1),
+            nn.Flatten(),
+            nn.Linear(512,1024),
+            nn.ReLU()
+        )
+
+    def forward(self, x):
+        self.out = self.model(x)
+        return self.out
+
+class ZhaoDecoder(nn.Module):
+    def __init__(self, in_channels=64, out_channels=1):
+        super(ZhaoDecoder, self).__init__()
+
+        self.model = nn.Sequential(
+            *deconvlayer3d(in_channels,48,2,(1,2,2),0,(0,1,1)),
+            PrintLayer(),
+            *deconvlayer3d(48,32,(1,2,2),0,(0,1,1)),
+            PrintLayer(),
+            *deconvlayer3d(32,32,2,(1,1,1),0,(0,0,0)),
+            PrintLayer(),
+            nn.Conv3d(32,out_channels,3,1,1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        self.out = self.model(x)
+        return self.out
+
+
+class V2V_Encoder(nn.Module):
+    """
+    Simple non-generic encoder class that receives 128x128 input and outputs 32x32 feature map as stimulation protocol
+    """   
+    def __init__(self, in_channels=3, out_channels=1,binary_stimulation=True):
+        super(V2V_Encoder, self).__init__()
+             
+        self.binary_stimulation = binary_stimulation
+        
+        # Model
+        self.model = nn.Sequential(*convlayer3d(in_channels,8,3,1,1),
+                                   *convlayer3d(8,16,3,1,1,resample_out=nn.MaxPool3d(2)),
+                                   *convlayer3d(16,32,3,1,1,resample_out=nn.MaxPool3d(2)),
+                                   ResidualBlock3d(32, resample_out=None),
+                                   ResidualBlock3d(32, resample_out=None),
+                                   ResidualBlock3d(32, resample_out=None),
+                                   ResidualBlock3d(32, resample_out=None),
+                                   *convlayer3d(32,16,3,1,1),
+                                   nn.Conv3d(16,out_channels,3,1,1),
+                                   nn.Flatten(),
+                                   nn.Linear(1024,1024),
+                                   nn.ReLU()
+                                #    nn.Softplus() #TODO: non-binary stimulation 
+                                #    nn.Tanh()
+                                #    nn.Sigmoid()
+                                )
+
+    def forward(self, x):
+        self.out = self.model(x)
+        # x = self.out
+        if self.binary_stimulation:
+            x = x + torch.sign(x).detach() - x.detach() # (self-through estimator) #TODO: non-binary stimulation 
+            
+        stimulation = self.out
+        
+        return stimulation    
+    
+class V2V_Recon_Decoder(nn.Module):
+    """
+    Simple non-generic phosphene decoder.
+    in: (256x256) SVP representation
+    out: (128x128) Reconstruction
+    """   
+    def __init__(self, in_channels=1, out_channels=1, out_activation='sigmoid'):
+        super(V2V_Recon_Decoder, self).__init__()
+             
+        # Activation of output layer
+        self.out_activation = {'tanh': nn.Tanh(),
+                               'sigmoid': nn.Sigmoid(),
+                               'relu': nn.LeakyReLU(),
+                               'softmax':nn.Softmax(dim=1)}[out_activation]
+        
+        # Model
+        self.model = nn.Sequential(*convlayer2d(in_channels,16,3,1,1),
+                                   *convlayer2d(16,32,3,1,1),
+                                   *convlayer2d(32,64,3,2,1),
+                                   ResidualBlock2d(64),
+                                   ResidualBlock2d(64),
+                                   ResidualBlock2d(64),
+                                   ResidualBlock2d(64),
+                                   *convlayer2d(64,32,3,1,1),
                                    nn.Conv2d(32,out_channels,3,1,1), 
                                    self.out_activation)       
 
     def forward(self, x):
         return self.model(x)    
     
-# class E2E_RealisticPhospheneSimulator(nn.Module):
-#     """A realistic simulator, using stimulation vectors to form a phosphene representation
-#     in: a 32x32 stimulation vector #TODO: flatten before inputting?
-#     out: 256x256 phosphene representation
-#     """
-#     def __init__(self, pMap,sigma_0, activation_mask, threshold, thresh_slope, args, device=torch.device('cuda:0')):
-#     #pMask,scale_factor=8, sigma=1.5,kernel_size=11, intensity=15, device=torch.device('cuda:0')):
-#         super(E2E_RealisticPhospheneSimulator, self).__init__()
-        
-#         # use_cuda = False if device == 'cpu' else True
-
-#         self.simulator = GaussianSimulator(pMap, sigma_0, activation_mask, threshold, thresh_slope, **args)
-
-#     def forward(self, stimulation):
-#         # stim = stimulation.flatten(start_dim=1)
-#         # print(f"stim shape before entering simulator: {stimulation.shape}")
-#         phosphenes = self.simulator(stim=stimulation*100).clamp(0,150)
-#         # print(f"phosphene shape after flatten: {phosphenes.shape}")
-#         phosphenes = phosphenes/150  #phosphenes.max()
-        
-#         phosphenes = phosphenes.view(phosphenes.shape[0], 1, phosphenes.shape[1], phosphenes.shape[2])
-#         return phosphenes
-
 class E2E_RealisticPhospheneSimulator(nn.Module):
     """A realistic simulator, using stimulation vectors to form a phosphene representation
-    in: a 1024 length stimulation vector
+    in: a 32x32 stimulation vector #TODO: flatten before inputting?
     out: 256x256 phosphene representation
     """
-    def __init__(self, params, r, phi):#pMap,sigma_0, activation_mask, threshold, thresh_slope, args, device=torch.device('cuda:0')):
+    def __init__(self, pMap,sigma_0, activation_mask, threshold, thresh_slope, args, device=torch.device('cuda:0')):
     #pMask,scale_factor=8, sigma=1.5,kernel_size=11, intensity=15, device=torch.device('cuda:0')):
         super(E2E_RealisticPhospheneSimulator, self).__init__()
         
         # use_cuda = False if device == 'cpu' else True
-        self.simulator = GaussianSimulator(params, r, phi)
-        # self.simulator = GaussianSimulator(pMap, sigma_0, activation_mask, threshold, thresh_slope, **args)
+
+        self.simulator = GaussianSimulator(pMap, sigma_0, activation_mask, threshold, thresh_slope, **args)
 
     def forward(self, stimulation):
         # stim = stimulation.flatten(start_dim=1)
         # print(f"stim shape before entering simulator: {stimulation.shape}")
-        phosphenes = self.simulator(stim_amp=stimulation*100).clamp(0,1)
+        phosphenes = self.simulator(stim=stimulation*100).clamp(0,150)
         # print(f"phosphene shape after flatten: {phosphenes.shape}")
-        # phosphenes = phosphenes/150  #phosphenes.max()
+        phosphenes = phosphenes/150  #phosphenes.max()
         
         phosphenes = phosphenes.view(phosphenes.shape[0], 1, phosphenes.shape[1], phosphenes.shape[2])
         return phosphenes
+
 
 class E2E_PhospheneSimulator(nn.Module):
     """ Uses three steps to convert  the stimulation vectors to phosphene representation:

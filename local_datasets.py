@@ -15,6 +15,57 @@ import string
 import utils
 from tqdm import tqdm
 
+class Bouncing_MNIST(Dataset):
+
+    def __init__(self, directory='./datasets/BouncingMNIST',
+                 device = torch.device('cuda:0'),
+                 mode = 'recon',
+                 imsize=128,
+                 n_frames=6,
+                 validation=False):
+        super().__init__()
+
+        self.device = device
+        self.mode = mode
+        self.imsize = imsize,
+        self.n_frames = n_frames,
+        # self.validation = validation
+
+        full_set = np.load(directory+'mnist_test_seq.npy').transpose(1, 0, 2, 3)
+        # full_set = full_set[:100] #TODO: remove
+        # print(full_set.shape)
+        #normalize
+        # full_set = full_set/255.
+        # full_set = torch.from_numpy(full_set)
+        if self.mode=='recon':
+            if n_frames<full_set.shape[1]:
+                divisor = int(full_set.shape[1]/n_frames)
+                full_set = full_set[:,:n_frames*divisor,:,:]
+                full_set = full_set.reshape((-1,n_frames,full_set.shape[2],full_set.shape[3]))
+        # print(full_set.shape)
+        np.random.shuffle(full_set)
+        split_int = int(0.1*full_set.shape[0])
+        if validation:
+            self.input = torch.from_numpy(full_set[:split_int])
+        else:
+            self.input = torch.from_numpy(full_set[split_int:])
+
+        self.input = self.input.unsqueeze(dim=1)
+        print(f"input shape: {self.input.shape}")
+
+
+    def __len__(self):
+        return len(self.input)
+
+    def __getitem__(self, i):
+        if self.mode == 'recon':
+            frames = T.Resize(128)(self.input[i]/255.)
+            return frames.detach().to(self.device)
+        elif self.mode == 'recon_pred':
+            input_frames = T.Resize(128)(self.input[i,:,:self.n_frames/2]/255.)#.to(self.device)
+            future_frames = T.Resize(128)(self.input[i,:,self.n_frames/2+1:]/255.)#.to(self.device)
+            return input_frames.detach().to(self.device), future_frames.detach().to(self.device)
+            
 class ADE_Dataset(Dataset):
     
     def __init__(self, directory='../_Datasets/ADE20K/',
