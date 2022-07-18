@@ -45,12 +45,11 @@ def initialize_components(cfg):
     models['decoder'] = model.E2E_Decoder(out_channels=cfg.reconstruction_channels,
                                         out_activation=cfg.out_activation).to(cfg.device)
 
-    use_cuda = False if cfg.device=='cpu' else True
+    # use_cuda = False if cfg.device=='cpu' else True
     if cfg.simulation_type == 'realistic':
-        # pMap,sigma_0, activation_mask, threshold, thresh_slope, args = init_a_bit_less(use_cuda=use_cuda)
         params = load_params('simulator/config/params.yaml')
-        r, phi = init_probabilistically(params,n_phosphenes=500)
-        models['simulator'] = model.E2E_RealisticPhospheneSimulator(params, r, phi).to(cfg.device)
+        r, phi = init_probabilistically(params,n_phosphenes=1024)
+        models['simulator'] = model.E2E_RealisticPhospheneSimulator(cfg,params, r, phi).to(cfg.device)
     else:
         if cfg.simulation_type == 'regular':
             pMask = utils.get_pMask(jitter_amplitude=0,dropout=False) # phosphene mask with regular mapping
@@ -71,8 +70,8 @@ def initialize_components(cfg):
         directory = './datasets/ADE20K/'
         # load_preprocessed = True if os.path.exists(directory+'processed_train_inputs.pkl') else False
         load_preprocessed = True
-        trainset = local_datasets.ADE_Dataset(device=cfg.device,directory=directory,load_preprocessed=load_preprocessed)
-        valset = local_datasets.ADE_Dataset(device=cfg.device,directory=directory,validation=True,load_preprocessed=load_preprocessed)
+        trainset = local_datasets.ADE_Dataset(device=cfg.device,directory=directory,load_preprocessed=load_preprocessed, circular_mask=True)
+        valset = local_datasets.ADE_Dataset(device=cfg.device,directory=directory,validation=True,load_preprocessed=load_preprocessed, circular_mask=True)
     dataset['trainloader'] = DataLoader(trainset,batch_size=int(cfg.batch_size),shuffle=True)
     dataset['valloader'] = DataLoader(valset,batch_size=int(cfg.batch_size),shuffle=False)
 
@@ -101,6 +100,9 @@ def initialize_components(cfg):
     train_settings['n_epochs'] = cfg.n_epochs
     train_settings['log_interval'] = cfg.log_interval
     train_settings['convergence_criterion'] = cfg.convergence_crit
+    train_settings['binned_stimulation'] = cfg.binned_stimulation
+    if cfg.binned_stimulation:
+        models['intensities_array'] = torch.linspace(0,params['encoding']['max_stim'],params['encoding']['n_config']+1,device=cfg.device)
     return models, dataset, optimization, train_settings
     
 
@@ -114,6 +116,9 @@ def train(models, dataset, optimization, train_settings, tb_writer):
     decoder   = models['decoder']
     simulator = models['simulator']
     
+    if train_settings['binned_stimulation']:
+        intensities_array = models['intensities_array']
+
     # Dataset
     trainloader = dataset['trainloader']
     valloader   = dataset['valloader']
@@ -205,7 +210,7 @@ def train(models, dataset, optimization, train_settings, tb_writer):
                 count_val+=1
                 try:
                     sample_iter = np.random.randint(0,len(valloader))
-                    for i, data in enumerate(tqdm(valloader, leave=False, position=0, desc='Validation'), 0):
+                    for j, data in enumerate(tqdm(valloader, leave=False, position=0, desc='Validation'), 0):
                         image,label = data #next(iter(valloader))
                         # print(label)
                             
@@ -216,10 +221,12 @@ def train(models, dataset, optimization, train_settings, tb_writer):
 
                             # 1. Forward pass
                             stimulation = encoder(image)
+                            if train_settings['binned_stimulation']:
+                                stimulation = utils.pred_to_intensities(intensities_array, stimulation)
                             phosphenes  = simulator(stimulation)
                             reconstruction = decoder(phosphenes)   
 
-                            if i==sample_iter: #save for plotting
+                            if j==sample_iter: #save for plotting
                                 sample_img = image
                                 sample_phos = phosphenes
                                 sample_recon = reconstruction
@@ -240,7 +247,7 @@ def train(models, dataset, optimization, train_settings, tb_writer):
 
                     sample = np.random.randint(0,sample_img.shape[0],5)
                     fig = utils.full_fig(sample_img[sample],sample_phos[sample],sample_recon[sample])
-                    fig.show()
+                    # fig.show()
                     tb_writer.add_figure(f'{model_name}/predictions, phosphenes and reconstruction',fig,epoch * len(trainloader) + i)  
 
                     
@@ -254,6 +261,11 @@ def train(models, dataset, optimization, train_settings, tb_writer):
                         logger('Saving to ' + savepath + '...')
                         torch.save(decoder.state_dict(), savepath)
                         
+                        for tag,img in zip(['orig','phos','recon'],[sample_img[sample],sample_phos[sample],sample_recon[sample]]):
+                            savepath = os.path.join(savedir,model_name + '_'+tag+'_imgs.npy' )
+                            img = img.detach().cpu().numpy()
+                            with open(savepath, 'wb') as f:
+                                np.save(f, img)
                         n_not_improved = 0
                     else:
                         n_not_improved = n_not_improved + 1
@@ -283,5 +295,7 @@ if __name__ == '__main__':
     print(cfg)
     models, dataset, optimization, train_settings = initialize_components(cfg)
     writer = SummaryWriter()
+    writer.add_text("Config", cfg.to_string())
+    writer.add_text("Model", 'old commit, new thresholding added')
     train(models, dataset, optimization, train_settings, writer)
 

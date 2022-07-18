@@ -117,7 +117,7 @@ class E2E_Encoder(nn.Module):
                                    nn.Flatten(),
                                    nn.Linear(1024,1024),
                                    nn.ReLU()
-                                #    nn.Softplus() #TODO: non-binary stimulation 
+                                #    nn.Softplus() #TODO: choose non-binary stimulation 
                                 #    nn.Tanh()
                                 #    nn.Sigmoid()
                                 )
@@ -125,12 +125,11 @@ class E2E_Encoder(nn.Module):
     def forward(self, x):
         self.out = self.model(x)
         # x = self.out
-        if self.binary_stimulation:
-            x = x + torch.sign(x).detach() - x.detach() # (self-through estimator) #TODO: non-binary stimulation 
+        # if self.binary_stimulation:
+            # x = x + torch.sign(x).detach() - x.detach() # (self-through estimator) #TODO: non-binary stimulation 
             
         # stimulation = .5*(x+1) #why?
-        # stimulation = stimulation*50.
-        stimulation = self.out
+        stimulation = self.out*1e-4
         
         return stimulation    
     
@@ -192,20 +191,17 @@ class E2E_RealisticPhospheneSimulator(nn.Module):
     in: a 1024 length stimulation vector
     out: 256x256 phosphene representation
     """
-    def __init__(self, params, r, phi):#pMap,sigma_0, activation_mask, threshold, thresh_slope, args, device=torch.device('cuda:0')):
+    def __init__(self, cfg, params, r, phi):#pMap,sigma_0, activation_mask, threshold, thresh_slope, args, device=torch.device('cuda:0')):
     #pMask,scale_factor=8, sigma=1.5,kernel_size=11, intensity=15, device=torch.device('cuda:0')):
         super(E2E_RealisticPhospheneSimulator, self).__init__()
         
         # use_cuda = False if device == 'cpu' else True
-        self.simulator = GaussianSimulator(params, r, phi)
+        self.simulator = GaussianSimulator(params, r, phi, batch_size=cfg.batch_size, device=cfg.device)
         # self.simulator = GaussianSimulator(pMap, sigma_0, activation_mask, threshold, thresh_slope, **args)
 
     def forward(self, stimulation):
-        # stim = stimulation.flatten(start_dim=1)
         # print(f"stim shape before entering simulator: {stimulation.shape}")
-        phosphenes = self.simulator(stim_amp=stimulation*100).clamp(0,1)
-        # print(f"phosphene shape after flatten: {phosphenes.shape}")
-        # phosphenes = phosphenes/150  #phosphenes.max()
+        phosphenes = self.simulator(stim_amp=stimulation).clamp(0,1)
         
         phosphenes = phosphenes.view(phosphenes.shape[0], 1, phosphenes.shape[1], phosphenes.shape[2])
         return phosphenes

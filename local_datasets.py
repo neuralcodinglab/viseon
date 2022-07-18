@@ -15,6 +15,20 @@ import string
 import utils
 from tqdm import tqdm
 
+def create_circular_mask(h, w, center=None, radius=None):
+
+    if center is None: # use the middle of the image
+        center = (int(w/2), int(h/2))
+    if radius is None: # use the smallest distance between the center and image walls
+        radius = min(center[0], center[1], w-center[0], h-center[1])
+
+    x = torch.arange(h)
+    Y, X = torch.meshgrid(x,x)
+    dist_from_center = torch.sqrt((X - center[0])**2 + (Y-center[1])**2)
+
+    mask = dist_from_center <= radius
+    return mask
+
 class Bouncing_MNIST(Dataset):
 
     def __init__(self, directory='./datasets/BouncingMNIST',
@@ -75,12 +89,14 @@ class ADE_Dataset(Dataset):
                  normalize = True,
                  contour_labels = True,
                  validation=False,
-                 load_preprocessed=False):
+                 load_preprocessed=False,
+                 circular_mask=True):
         
         self.contour_labels = contour_labels
         self.normalize = normalize
         self.grayscale = grayscale
         self.device = device
+        self.circular_mask = circular_mask
         # print('before first list comprehension')
 
         
@@ -222,6 +238,13 @@ class ADE_Dataset(Dataset):
         
         x = self.inputs[i]
         t = self.targets[i]
+
+        if self.circular_mask:
+            mask = create_circular_mask(x.shape[1],x.shape[2]).view(1,x.shape[1],x.shape[2])
+            print(mask.shape,x.shape)
+            x = x*mask
+            t = t*mask
+
         # # Load Image, Label
         # x = Image.open(self.input_files[i]).convert('RGB')
         # t = Image.open(self.target_files[i])

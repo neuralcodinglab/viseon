@@ -67,7 +67,7 @@ def display_image_in_actual_size(img, dpi=100):
 
 def load_coords_from_yaml(path, n_coords=None):
     with open(path, 'r') as f:
-        coords = yaml.load(f, Loader=yaml.FullLoader)
+        coords = yaml.load(f, Loader=yaml.SafeLoader)
         x_coords = np.array(coords['x'])
         y_coords = np.array(coords['y'])
 
@@ -80,7 +80,7 @@ def load_coords_from_yaml(path, n_coords=None):
 
 def load_params(path):
     with open(path, 'r') as f:
-        params = yaml.load(f, Loader=yaml.FullLoader)
+        params = yaml.load(f, Loader=yaml.SafeLoader)
     return params
 
 def webcam_demo(simulator, params, resolution=(256,256)):

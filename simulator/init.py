@@ -2,18 +2,26 @@ import numpy as np
 import simulator.cortex_models as cortex_models
 
 import matplotlib.pyplot as plt
+from scipy.stats import truncnorm
 
 def init_magnification(params, r):
     ECCENTRICITY_SCALING = cortex_models.get_cortical_magnification(params['cortex_model'])
     magnification = ECCENTRICITY_SCALING(r)
     return magnification
 
-def init_threshold_curves(n_phosphenes, threshold_range, slope_range):
-    threshold = threshold_range[0]+(np.random.power(0.4, size=n_phosphenes)*(threshold_range[1]-threshold_range[0]))  # TODO: threshold dist based on Schmidt et al., 1996 
-    slope = np.random.uniform(low=slope_range[0], high=slope_range[1], size=n_phosphenes)
+def get_truncated_normal(size, mean, sd, low=0., upp=1.):
+    return truncnorm.rvs((low - mean) / sd, (upp - mean) / sd, loc=mean, scale=sd, size=size)
 
-    return threshold, slope 
+#def init_threshold_curves(n_phosphenes, threshold_range, slope_range):
+#    threshold = threshold_range[0]+(np.random.power(0.4, size=n_phosphenes)*(threshold_range[1]-threshold_range[0]))  # TODO: threshold dist based on Schmidt et al., 1996 
+#    slope = np.random.uniform(low=slope_range[0], high=slope_range[1], size=n_phosphenes)
+#
+#    return threshold, slope 
 
+def init_threshold_curves(n_phosphenes, threshold_mean, threshold_sd, slope_range):
+    threshold = get_truncated_normal(n_phosphenes, threshold_mean, threshold_sd)
+    slope = np.random.uniform(low=slope_range[0],high=slope_range[1], size=n_phosphenes)
+    return threshold, slope
 def init_from_cortex(cortex_params, coords=None):
     """Transform electrode locations into a phosphene map, given certain parameters for visuotopic models
 

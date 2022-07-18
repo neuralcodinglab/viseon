@@ -5,8 +5,13 @@ run:
   fps: 35
   gpu: null #if using cuda, enter gpu nr here (e.g. 0)
   video: False
-  print_stats: True
+  print_stats: False
 
+# stimulation params, used in encoder
+encoding:
+  max_stim: 150.e-6 #maximum stimulation amplitude (micro-ampere)
+  n_config: 10 #number of configured intensities
+  
 # display specs to accurately diplay sizes in dva
 display:
   screen_resolution: [1920,1080] #width & height in pixels
@@ -56,8 +61,11 @@ brightness_saturation:
 # Stimulation threshold
 thresholding:
   use_threshold: True
+  rheobase: 23.9e-6
+  chronaxie: 44.5e-3
+  threshold_sd: 0.5e-6
   range_slope: [0.1e+7,0.5e+7] #slope of psychometric curve
-  range_thresh: [0.7e-6,5.8e-6] #range of threshold values in charge per second, Fernández's mean threshold +/- two standard deviations
+  #range_thresh: [0.7e-6,5.8e-6] #range of threshold values in charge per second, Fernández's mean threshold +/- two standard deviations
         
 # Pulse width (pw), frequency (freq) default values, in case they aren't specified in the input
 default_stim:

@@ -7,7 +7,7 @@ import simulator.utils as utils
 import simulator.init as init
 
 class GaussianSimulator(object):
-    def __init__(self, params, r, phi, batch_size=1):
+    def __init__(self, params, r, phi, batch_size=1, device='cpu'):
         """initialize a simulator with provided parameters settings, given phosphene locations in polar coordinates
 
         :param params: dict of dicts with all setting parameters
@@ -20,13 +20,14 @@ class GaussianSimulator(object):
         # # Other parameters
         self.__dict__.update(params)
 
-        gpu_nr = self.run['gpu']
-        self.device = f'cuda:{int(gpu_nr)}' if gpu_nr else 'cpu'
+        #gpu_nr = self.run['gpu']
+        #self.device = f'cuda:{int(gpu_nr)}' if gpu_nr else 'cpu'
+        self.device = device
         self.batch_size = batch_size
 
         # Convert to tensors, generate pMaps
-        r = torch.from_numpy(r).to(self.device)
-        phi = torch.from_numpy(phi).to(self.device)
+        r = torch.from_numpy(r).to(self.device).float()
+        phi = torch.from_numpy(phi).to(self.device).float()
         
         # Useful variables
         self.deg2pix_coeff = utils.get_deg2pix_coeff(self.run)
@@ -42,9 +43,11 @@ class GaussianSimulator(object):
         # assert self.magnification.device == self.device, f"Device not correct, self.magnification is on '{self.magnification.device}' while simulator device is '{self.device}'"
 
         if self.thresholding['use_threshold']:
-            threshold, slope_thresh = init.init_threshold_curves(self.n_phosphenes, self.thresholding['range_thresh'], self.thresholding['range_slope'])
-            self.threshold = torch.from_numpy(threshold).to(self.device)
-            self.slope_thresh =  torch.from_numpy(slope_thresh).to(self.device)
+            # threshold, slope_thresh = init.init_threshold_curves(self.n_phosphenes, self.thresholding['range_thresh'], self.thresholding['range_slope'])
+            threshold_mean = self.thresholding['rheobase']*self.thresholding['chronaxie']
+            threshold, slope_thresh = init.init_threshold_curves(self.n_phosphenes, threshold_mean, self.thresholding['threshold_sd'], self.thresholding['range_slope'])
+            self.threshold = torch.from_numpy(threshold).to(self.device).float()
+            self.slope_thresh =  torch.from_numpy(slope_thresh).to(self.device).float()
 
         # Temporal dynamics params
         self.activation_decay = math.exp(-self.temporal_dynamics['activation_decay_rate']*(1/self.run['fps']))
@@ -83,8 +86,8 @@ class GaussianSimulator(object):
         GABOR_ORIENTATION = lambda size: torch.rand(size)*2*math.pi #Rotation of ellips
 
         # Cartesian coordinate system for the visual field
-        x = torch.arange(self.resolution[0]).float()
-        y = torch.arange(self.resolution[1]).float()
+        x = torch.arange(self.resolution[0], device=self.device).float()
+        y = torch.arange(self.resolution[1], device=self.device).float()
         grid = torch.meshgrid(x, y, indexing='xy')
         grid_x = grid[0].unsqueeze(0).repeat(N_PHOSPHENES, 1, 1)
         grid_y = grid[1].unsqueeze(0).repeat(N_PHOSPHENES, 1, 1)
@@ -135,15 +138,17 @@ class GaussianSimulator(object):
         
         #calculate charge per second
         charge_per_second = torch.prod(stim, dim=2) #in C
-
+        cps_inefficiency = self.thresholding['rheobase']*pw*freq
+        effective_cps = torch.max(charge_per_second - cps_inefficiency, torch.zeros_like(charge_per_second))
+        
         if self.run['video']:
             # update activation using charge per frame and trace for habituation 
-            self.activation = self.activation_decay * self.activation + self.temporal_dynamics['input_effect'] * (charge_per_second - (self.trace_fast + self.trace_slow))  
+            self.activation = self.activation_decay * self.activation + self.temporal_dynamics['input_effect'] * (effective_cps - (self.trace_fast + self.trace_slow))  
             self.activation = torch.max(self.activation, torch.zeros_like(self.activation))  # don't allow negative activations
-            self.trace_fast = self.trace_fast_decay * self.trace_fast + self.trace_fast_increase * charge_per_second  # update fast trace
-            self.trace_slow = self.trace_slow_decay * self.trace_slow + self.trace_slow_increase * charge_per_second  # update slow trace
+            self.trace_fast = self.trace_fast_decay * self.trace_fast + self.trace_fast_increase * effective_cps  # update fast trace
+            self.trace_slow = self.trace_slow_decay * self.trace_slow + self.trace_slow_increase * effective_cps  # update slow trace
         else:
-            self.activation = charge_per_second
+            self.activation = effective_cps
         # Bosking et al., 2017: input current effect on size, including saturation at higher values
         # AC = self.MD / torch.add(torch.exp(-self.slope_stim*(stim-self.I_half)),1) # DISCUSS: activation or stimulus amplitude here? No temporal dynamics now
 
@@ -153,7 +158,7 @@ class GaussianSimulator(object):
         self.sigma = self.deg2pix_coeff*(AC*1/self.magnification.repeat(self.batch_size,1)) #+ self.activation_decay*self.sigma #TODO: check these temporal dynamics
 
         # saturate activation values
-        self.brightness = self.SIGMOID(self.brightness_saturation['slope_brightness']*(self.activation-self.brightness_saturation['cps_half']))
+        self.brightness = self.SIGMOID(self.brightness_saturation['slope_brightness']*(self.activation-self.brightness_saturation['cps_half'])).float()
         # self.brightness = torch.tanh(self.brightness_saturation['slope_brightness']*self.activation) #DISCUSS: sigmoid or tanh?
 
         # thresholding. Determine whether the activation is high enough (probabilistically) and apply to brightness vector

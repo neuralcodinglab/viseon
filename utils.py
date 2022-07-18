@@ -12,6 +12,13 @@ import pandas as pd
 import os 
 import argparse
 
+def pred_to_intensities(intensitiesArray, predictions):
+    activation_values = predictions * (intensitiesArray.max()-intensitiesArray.min())+intensitiesArray.min()
+    intensitiesArray = torch.tile(intensitiesArray,(predictions.shape[1],1))
+    activation_values = intensitiesArray[torch.arange(intensitiesArray.shape[0]),(torch.abs(intensitiesArray - activation_values.unsqueeze(2))).argmin(axis=2)]
+
+    return activation_values
+
 class Logger(object):
     def __init__(self,log_file='out.log'):
         self.logger = logging.getLogger()
@@ -27,12 +34,22 @@ class Logger(object):
         self.logger.info(message)
 
 def get_args(args_list=None):
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(fromfile_prefix_chars='@')
 
     def none_or_str(value):
         if value == 'None':
             return None
         return value
+
+    def str2bool(v):
+        if isinstance(v, bool):
+            return v
+        if v.lower() in ('yes', 'true', 't', 'y', '1'):
+            return True
+        elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+            return False
+        else:
+            raise argparse.ArgumentTypeError('Boolean value expected.')
     
     ap.add_argument("-m", "--model_name", type=str, default="demo_model",
                     help="model name")
@@ -46,8 +63,10 @@ def get_args(args_list=None):
                     help="number of batches after which to evaluate model (and logged)")   
     ap.add_argument("-crit", "--convergence_crit", type=int, default=30,
                     help="stop-criterion for convergence: number of evaluations after which model is not improved")   
-    ap.add_argument("-bin", "--binary_stimulation", type=bool, default=True,
-                    help="use quantized (binary) instead of continuous stimulation protocol")   
+    ap.add_argument("-bin", "--binary_stimulation", type=str2bool, default=True,
+                    help="use quantized (binary) instead of continuous stimulation protocol")
+    ap.add_argument("-bs", "--binned_stimulation", type=str2bool, default=True,
+                    help="use binned instead of continuous stimulation protocol")
     ap.add_argument("-sim", "--simulation_type", type=str, default="regular",
                     help="'regular' or 'personalized' phosphene mapping") 
     ap.add_argument("-in", "--input_channels", type=int, default=1,
