@@ -22,6 +22,7 @@ def init_threshold_curves(n_phosphenes, threshold_mean, threshold_sd, slope_rang
     threshold = get_truncated_normal(n_phosphenes, threshold_mean, threshold_sd)
     slope = np.random.uniform(low=slope_range[0],high=slope_range[1], size=n_phosphenes)
     return threshold, slope
+    
 def init_from_cortex(cortex_params, coords=None):
     """Transform electrode locations into a phosphene map, given certain parameters for visuotopic models
 

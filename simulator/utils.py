@@ -144,3 +144,80 @@ def webcam_demo(simulator, params, resolution=(256,256)):
     cap.release()
     # Destroy all the windows
     cv2.destroyAllWindows()
+
+
+def process_video(simulator, params, video_path, save_path, n_frames = None, timing=False, save_history=False, device='cpu'):
+    simulator.reset()
+    FRAMERATE = params['run']['fps']
+    #save activations for plotting. If saving the history for all phosphenes, only simulate for a few frames (uses a lot of memory and fries my laptop)
+    # save_history = False
+    if save_history:
+        history = {key: [] for key in simulator.get_state()}
+        history['stimulation'] = []
+        print(history)
+
+    cap = cv2.VideoCapture(video_path)
+
+    if not cap.isOpened():
+        print('Unable to read file :(')
+        
+    fourcc = cv2.VideoWriter_fourcc(*'XVID') #codec
+    sim_resolution = simulator.resolution
+
+    out = cv2.VideoWriter(save_path, fourcc, FRAMERATE, (sim_resolution[0]*2,sim_resolution[1]),False)
+    frame_nr = 0
+    if timing:
+        start_time = time.time()
+    while frame_nr<n_frames:
+        ret, frame = cap.read()
+        frame_nr+=1
+        if ret:
+            # to one channel, grayscale 
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+            # get square if frame is not square
+            if frame.shape[0] != frame.shape[1]:
+                shortest_side = min(frame.shape)
+                frame = frame[frame.shape[0]//2-shortest_side//2:frame.shape[0]//2+shortest_side//2,frame.shape[1]//2-shortest_side//2:frame.shape[1]//2+shortest_side//2]
+                
+            # preprocess: to resize, grayscale and blur
+            frame = cv2.resize(frame, sim_resolution)
+            frame = cv2.GaussianBlur(frame, (3,3), 0)
+
+            # edge/contour detector
+            # processed_img = canny_processor(frame,T_HIGH//2,T_HIGH)
+            processed_img = sobel_processor(frame)
+            processed_img = frame
+            stim_pattern = sample_receptive_fields(processed_img, simulator.sampling_mask).view(1,-1).to(device)
+            # stim_pattern = sample_centers(processed_img, simulator.pMap)
+
+            # Generate phosphenes 
+            phs = simulator(stim_pattern)
+            phs = phs.squeeze().cpu().numpy()*255
+
+            if save_history:
+                state = simulator.get_state()
+                for key in state:
+                    print(key)
+                    print(state[key])
+                    history[key].append(state[key])
+                    print(history[key])
+                history['stimulation'].append(stim_pattern.cpu().numpy())
+
+            # Concatenate results
+            # cat = np.concatenate([frame, processed_img, phs], axis=1).astype('uint8')
+            cat = np.concatenate([processed_img, phs], axis=1).astype('uint8')
+            
+            out.write(cat)
+
+        else:
+            break
+        # the 'q' button is set as the quit button
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+    if timing:
+        print("--- %s seconds ---" % (time.time() - start_time))
+    cap.release()
+    out.release() 
+
+    cv2.destroyAllWindows()

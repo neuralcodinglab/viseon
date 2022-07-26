@@ -1,6 +1,9 @@
-# from cmath import inf
+if __name__ == '__main__':
+    import sys
+    from os.path import dirname, abspath                     
+    sys.path.insert(0, dirname(dirname(abspath(__file__)))) 
+
 import torch
-# import cortex_models
 import math
 
 import simulator.utils as utils
@@ -21,7 +24,6 @@ class GaussianSimulator(object):
         self.__dict__.update(params)
 
         #gpu_nr = self.run['gpu']
-        #self.device = f'cuda:{int(gpu_nr)}' if gpu_nr else 'cpu'
         self.device = device
         self.batch_size = batch_size
 
@@ -223,14 +225,34 @@ class GaussianSimulator(object):
 
 
 if __name__ == '__main__':
+    import argparse
+    import time
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-m", "--mode", type=str, default="webcam",
+                    help="mode, webcam input or video")
+    ap.add_argument("-vid", "--video_path", type=str, help="path to video to be processed")
+    ap.add_argument("-save", "--save_path", type=str, help="path to save processed video to (webcam input is not saved")
+    ap.add_argument("-nf", "--n_frames", type=int, help="number of frames to process")
+    ap.add_argument("-nphos", "--n_phosphenes", type=int, help="number of phosphenes in simulator")
+    ap.add_argument("-dev", "--device", type=str, default="cpu", help="device cpu or e.g. cuda:0")
+    ap.add_argument("-t", "--time", action='store_true')
+    ap.add_argument("-no-t", "--no_time", dest='time', action='store_true')
+
+    ap.set_defaults(time=True)
+
+    args = ap.parse_args()
 
     params = utils.load_params('config/params.yaml')
     # electrode_coords = utils.load_coords_from_yaml('config/grid_coords_valid.yaml', n_coords=100)
     # r, phi = init.init_from_cortex_full_view(params, electrode_coords)
-    r, phi = init.init_probabilistically(params,n_phosphenes=500)
+    r, phi = init.init_probabilistically(params,n_phosphenes=args.n_phosphenes)
     
-    simulator = GaussianSimulator(params, r, phi)
+    simulator = GaussianSimulator(params, r, phi, batch_size=1, device=args.device)
     
     resolution = params['run']['resolution']
     
-    utils.webcam_demo(simulator, params, resolution=resolution)
+    if args.mode == "webcam":
+        utils.webcam_demo(simulator, params, resolution=resolution)
+    elif args.mode== "video":
+        utils.process_video(simulator, params, args.video_path, args.save_path, args.n_frames, args.time, device=args.device)

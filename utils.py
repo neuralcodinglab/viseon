@@ -13,10 +13,12 @@ import os
 import argparse
 
 def pred_to_intensities(intensitiesArray, predictions):
-    activation_values = predictions * (intensitiesArray.max()-intensitiesArray.min())+intensitiesArray.min()
+    # activation_values = predictions * (intensitiesArray.max()-intensitiesArray.min())+intensitiesArray.min()
+    # print(f"activation_values scaled: {activation_values.mean(), activation_values.max()}")
+    activation_values = predictions
     intensitiesArray = torch.tile(intensitiesArray,(predictions.shape[1],1))
     activation_values = intensitiesArray[torch.arange(intensitiesArray.shape[0]),(torch.abs(intensitiesArray - activation_values.unsqueeze(2))).argmin(axis=2)]
-
+    # print(f"activation_values binned: {activation_values.mean(), activation_values.max()}")
     return activation_values
 
 class Logger(object):

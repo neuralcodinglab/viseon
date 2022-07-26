@@ -68,10 +68,10 @@ def initialize_components(cfg):
         valset = local_datasets.Character_Dataset(device=cfg.device,directory=directory,validation = True) 
     elif cfg.dataset == 'ADE20K':
         directory = './datasets/ADE20K/'
-        # load_preprocessed = True if os.path.exists(directory+'processed_train_inputs.pkl') else False
-        load_preprocessed = True
-        trainset = local_datasets.ADE_Dataset(device=cfg.device,directory=directory,load_preprocessed=load_preprocessed, circular_mask=True)
-        valset = local_datasets.ADE_Dataset(device=cfg.device,directory=directory,validation=True,load_preprocessed=load_preprocessed, circular_mask=True)
+        load_preprocessed = True if os.path.exists(directory+'/images/processed_train') and os.path.exists(directory+'/images/processed_val') else False
+        # load_preprocessed = True
+        trainset = local_datasets.ADE_Dataset(device=cfg.device,directory=directory,load_preprocessed=load_preprocessed, circular_mask=True,normalize=False)
+        valset = local_datasets.ADE_Dataset(device=cfg.device,directory=directory,validation=True,load_preprocessed=load_preprocessed, circular_mask=True, normalize=False)
     dataset['trainloader'] = DataLoader(trainset,batch_size=int(cfg.batch_size),shuffle=True)
     dataset['valloader'] = DataLoader(valset,batch_size=int(cfg.batch_size),shuffle=False)
 

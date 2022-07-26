@@ -97,21 +97,6 @@ class ADE_Dataset(Dataset):
         self.grayscale = grayscale
         self.device = device
         self.circular_mask = circular_mask
-        # print('before first list comprehension')
-
-        
-
-        # img_files, seg_files = [],[]
-        # for path, subdirs, files in os.walk(os.path.join(directory,'images','training')):
-        #     img_files+= [files for files in glob(os.path.join(path,'*.jpg'))]
-        #     seg_files+= [files for files in glob(os.path.join(path,'*seg.png'))]
-        # val_img_files, val_seg_files, = [],[]
-        # for path, subdirs, files in os.walk(os.path.join(directory,'images','validation')):
-        #     val_img_files+= [files for files in glob(os.path.join(path,'*.jpg'))] 
-        #     val_seg_files+= [files for files in glob(os.path.join(path,'*seg.png'))]
-        # for l in [img_files,seg_files,val_img_files,val_seg_files]:
-        #     l.sort()   
-        
     
         contour = lambda im: im.filter(ImageFilter.FIND_EDGES).point(lambda p: p > 1 and 255) if self.contour_labels else im
         # to_grayscale = lambda im: im.convert('L') if self.grayscale else im
@@ -136,43 +121,16 @@ class ADE_Dataset(Dataset):
         self.to_grayscale = lambda image:torch.sum(torch.stack([weights[c]*image[c,:,:] for c in range(3)],dim=0),
                                                    dim=0,
                                                    keepdim=True)
-        
-        # Transform sem. seg. to contour labels
-        # to_grayscale = self.to_grayscale #lambda image : image.mean(axis=0,keepdims=True)
-        # to_cv2_list  = lambda image_tensor : [np.squeeze((255*img.cpu().numpy())).astype('uint8') for img in image_tensor]
-        # canny_edge   = lambda image_list : [cv.Canny(img,10,10)/255 for img in image_list]
-        # to_tensor    = lambda image_list : torch.tensor(np.array(image_list), dtype=torch.long)
-        # squeeze_img  = lambda image_tensor : torch.squeeze(image_tensor)
-        # self.contour = T.Compose([T.Lambda(to_grayscale),
-        #                           T.Lambda(to_cv2_list),
-        #                           T.Lambda(canny_edge),
-        #                           T.Lambda(to_tensor),
-        #                           T.Lambda(squeeze_img)])
-
-
-        # contour_fun = lambda im: im.filter(ImageFilter.FIND_EDGES).point(lambda p: p > 1 and 255)
-        # gray_resize = lambda im: im.convert("L").resize((128,128))
-
-        
-        # center_crop = lambda img:F.center_crop(img, min(img.size))
-        # self.trg_transform = T.Compose([T.Lambda(center_crop),
-        #                                 T.Resize(imsize,interpolation=Image.NEAREST),# Nearest Neighbour
-        #                                 T.Lambda(contour),
-        #                                 T.ToTensor()])
-
-        # self.contour = T.Compose([T.Lambda(contour_fun), T.Lambda(gray_resize)])
 
         self.inputs = []
         self.targets = []
         
-        val_path = '_val' if validation else '_train'
-        path = directory+'processed'+val_path
+        val_path = '_val/' if validation else '_train/'
+        path = directory+'/images/processed'+val_path
         if load_preprocessed:
             self.load(path)
             print('----Loaded preprocessed data----')
             print(f'input length: {len(self.inputs)} samples')
-            # self.inputs = self.inputs[:10000]
-            # self.targets = self.targets[:10000]
         else:
             # Collect files 
             img_files, seg_files = [],[]
@@ -241,30 +199,9 @@ class ADE_Dataset(Dataset):
 
         if self.circular_mask:
             mask = create_circular_mask(x.shape[1],x.shape[2]).view(1,x.shape[1],x.shape[2])
-            print(mask.shape,x.shape)
             x = x*mask
             t = t*mask
-
-        # # Load Image, Label
-        # x = Image.open(self.input_files[i]).convert('RGB')
-        # t = Image.open(self.target_files[i])
-        
-
-        
-        # # Crop and resize
-        # x = self.img_transform(x)
-        # t = self.trg_transform(t)
-                                      
-        # # Additional tranforms:
-        # if self.normalize:
-        #     x = self.normalizer(x)
-        # if self.contour_labels:
-        #     t = self.contour(t)
-        # if self.grayscale:
-        #     x = self.to_grayscale(x)
-        
-
-            
+    
         return x.detach().to(self.device),t.detach().to(self.device)
     
     
