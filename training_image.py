@@ -49,7 +49,7 @@ def initialize_components(cfg):
     if cfg.simulation_type == 'realistic':
         params = load_params('simulator/config/params.yaml')
         r, phi = init_probabilistically(params,n_phosphenes=1024)
-        models['simulator'] = model.E2E_RealisticPhospheneSimulator(cfg,params, r, phi).to(cfg.device)
+        models['simulator'] = model.E2E_RealisticPhospheneSimulator(cfg, params, r, phi).to(cfg.device)
     else:
         if cfg.simulation_type == 'regular':
             pMask = utils.get_pMask(jitter_amplitude=0,dropout=False) # phosphene mask with regular mapping

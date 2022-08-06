@@ -162,37 +162,13 @@ class E2E_Decoder(nn.Module):
 
     def forward(self, x):
         return self.model(x)    
-    
-# class E2E_RealisticPhospheneSimulator(nn.Module):
-#     """A realistic simulator, using stimulation vectors to form a phosphene representation
-#     in: a 32x32 stimulation vector #TODO: flatten before inputting?
-#     out: 256x256 phosphene representation
-#     """
-#     def __init__(self, pMap,sigma_0, activation_mask, threshold, thresh_slope, args, device=torch.device('cuda:0')):
-#     #pMask,scale_factor=8, sigma=1.5,kernel_size=11, intensity=15, device=torch.device('cuda:0')):
-#         super(E2E_RealisticPhospheneSimulator, self).__init__()
-        
-#         # use_cuda = False if device == 'cpu' else True
-
-#         self.simulator = GaussianSimulator(pMap, sigma_0, activation_mask, threshold, thresh_slope, **args)
-
-#     def forward(self, stimulation):
-#         # stim = stimulation.flatten(start_dim=1)
-#         # print(f"stim shape before entering simulator: {stimulation.shape}")
-#         phosphenes = self.simulator(stim=stimulation*100).clamp(0,150)
-#         # print(f"phosphene shape after flatten: {phosphenes.shape}")
-#         phosphenes = phosphenes/150  #phosphenes.max()
-        
-#         phosphenes = phosphenes.view(phosphenes.shape[0], 1, phosphenes.shape[1], phosphenes.shape[2])
-#         return phosphenes
 
 class E2E_RealisticPhospheneSimulator(nn.Module):
     """A realistic simulator, using stimulation vectors to form a phosphene representation
     in: a 1024 length stimulation vector
     out: 256x256 phosphene representation
     """
-    def __init__(self, cfg, params, r, phi):#pMap,sigma_0, activation_mask, threshold, thresh_slope, args, device=torch.device('cuda:0')):
-    #pMask,scale_factor=8, sigma=1.5,kernel_size=11, intensity=15, device=torch.device('cuda:0')):
+    def __init__(self, cfg, params, r, phi):
         super(E2E_RealisticPhospheneSimulator, self).__init__()
         
         # use_cuda = False if device == 'cpu' else True

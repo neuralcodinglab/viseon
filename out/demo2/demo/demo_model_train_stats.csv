@@ -1,0 +1,1 @@
+epoch,i,tr_recon_loss,val_recon_loss,tr_pred_loss,val_pred_loss,tr_phosrep_loss,val_phosrep_loss,tr_total_loss,val_total_loss

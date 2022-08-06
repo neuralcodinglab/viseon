@@ -13,10 +13,8 @@ class ZhaoLoss(object):
         
         # Reconstruction loss
         self.recon_loss = torch.nn.MSELoss()
-        
         self.pred_loss = torch.nn.MSELoss()
-
-        # self.phosrep_loss = torch.nn.MSELoss()
+        self.phosrep_loss = torch.nn.MSELoss()
         
         self.kappa = kappa
 
@@ -26,22 +24,45 @@ class ZhaoLoss(object):
             'val_recon_loss': [],
             'tr_pred_loss': [],
             'val_pred_loss': [],
-            # 'tr_phosrep_loss': [],
-            # 'val_phosrep_loss': [],
+            'tr_phosrep_loss': [],
+            'val_phosrep_loss': [],
             'tr_total_loss':[],
             'val_total_loss':[]} 
-        self.running_loss = {'recon':0,'pred':0,'total':0} #,'phosrep':0
-        self.n_iterations = 0
         
+        self.running_loss = {'recon':0,'pred':0,'phosrep':0, 'total':0} #,
+        self.val_running_loss = {'recon':0,'pred':0,'phosrep':0,'total':0} #
+        self.n_iterations = 0
+        self.n_val_iterations = 0
+
+
+    def get_stats(self,reset_train=False,reset_val=False):
+        self.stats['val_recon_loss'].append(self.val_running_loss['recon']/self.n_val_iterations)
+        self.stats['val_pred_loss'].append(self.val_running_loss['pred']/self.n_val_iterations)
+        self.stats['val_phosrep_loss'].append(self.val_running_loss['phosrep']/self.n_val_iterations)
+        self.stats['val_total_loss'].append(self.val_running_loss['total']/self.n_val_iterations)
+        self.stats['tr_recon_loss'].append(self.running_loss['recon']/self.n_iterations)
+        self.stats['tr_pred_loss'].append(self.running_loss['pred']/self.n_iterations)
+        self.stats['tr_phosrep_loss'].append(self.running_loss['phosrep']/self.n_iterations)
+        self.stats['tr_total_loss'].append(self.running_loss['total']/self.n_iterations)
+        
+
+        if reset_train:
+            self.running_loss = {key:0 for key in self.running_loss}
+            self.n_iterations = 0
+        if reset_val:
+            self.val_running_loss = {key:0 for key in self.val_running_loss}
+            self.n_val_iterations = 0
+        return self.stats   
         
     def __call__(self,input_frames,future_frames,phosphenes,reconstruction,prediction,validation=False):   
 
-        # print(f"phosphenes shape: {phosphenes.shape}") 
-        
-        # phs = T.Resize(size=(input_frames.size()[-2],input_frames.size()[-1]))(phosphenes)
+        # print(f"phosphenes shape in loss: {phosphenes.shape}") 
+        # bs,c,seq,h,w = phosphenes.size()
+        # phs = T.Resize(size=(input_frames.size()[-2],input_frames.size()[-1]))(phosphenes.view(-1,c,h,w)).view(bs,c,seq,)#.view(1,1,-1,phosphenes.size()[-2],phosphenes.size()[-1])
+        phs = F.interpolate(phosphenes, (phosphenes.shape[2],input_frames.shape[-2],input_frames.shape[-1]))
 
         # Calculate loss
-        # loss_phosrep = self.phosrep_loss(phs,input_frames)
+        loss_phosrep = self.phosrep_loss(phs,input_frames)
         loss_recon = self.recon_loss(reconstruction,input_frames)
         loss_pred = self.pred_loss(prediction,future_frames)
 
@@ -49,28 +70,21 @@ class ZhaoLoss(object):
         #     loss_total = loss_phosrep/3 + loss_recon/3 + loss_pred/3
         # else:
         #     loss_total = loss_phosrep*self.kappa[0] + loss_recon*self.kappa[1] + loss_pred*self.kappa[2]
-        loss_total = 0.5*loss_recon+0.5*loss_pred
+        loss_total = 0.3*loss_recon+0.3*loss_pred+0.3*loss_phosrep
+
         if not validation:
             # Save running loss and return total loss
-            self.running_loss['pred'] += loss_pred.item()
             self.running_loss['recon'] += loss_recon.item()
-            # self.running_loss['phosrep'] += loss_phosrep.item()
+            self.running_loss['pred'] += loss_pred.item()
             self.running_loss['total'] += loss_total.item()
             self.n_iterations += 1
             return loss_total
         else:
-            self.stats['val_recon_loss'].append(loss_recon.item())
-            self.stats['val_pred_loss'].append(loss_pred.item())
-            # self.stats['val_phosrep_loss'].append(loss_phosrep.item())
-            self.stats['val_total_loss'].append(loss_total.item())
-            self.stats['tr_recon_loss'].append(self.running_loss['recon']/self.n_iterations)
-            self.stats['tr_pred_loss'].append(self.running_loss['pred']/self.n_iterations)
-            # self.stats['tr_phosrep_loss'].append(self.running_loss['phosrep']/self.n_iterations)  
-            self.stats['tr_total_loss'].append(self.running_loss['total']/self.n_iterations)
-                
-            self.running_loss = {key:0 for key in self.running_loss}
-            self.n_iterations = 0
-            return self.stats
+            self.val_running_loss['recon'] += loss_recon.item()
+            self.val_running_loss['pred'] += loss_pred.item()
+            self.val_running_loss['total'] += loss_total.item()
+            self.n_val_iterations += 1
+            return loss_total
 
 class ImageLoss(object):
     def __init__(self, recon_loss_type='mse',recon_loss_param=None, stimu_loss_type=None, phosrep_loss_type=None, phosrep_loss_param=None, kappa=0, device='cpu'):

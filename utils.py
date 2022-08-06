@@ -69,8 +69,8 @@ def get_args(args_list=None):
                     help="use quantized (binary) instead of continuous stimulation protocol")
     ap.add_argument("-bs", "--binned_stimulation", type=str2bool, default=True,
                     help="use binned instead of continuous stimulation protocol")
-    ap.add_argument("-sim", "--simulation_type", type=str, default="regular",
-                    help="'regular' or 'personalized' phosphene mapping") 
+    ap.add_argument("-sim", "--simulation_type", type=str, default="realistic",
+                    help="'realistic', 'regular' or 'personalized' phosphene mapping") 
     ap.add_argument("-in", "--input_channels", type=int, default=1,
                     help="only grayscale (single channel) images are supported for now")   
     ap.add_argument("-out", "--reconstruction_channels", type=int, default=1,
@@ -78,11 +78,13 @@ def get_args(args_list=None):
     ap.add_argument("-act", "--out_activation", type=str, default="sigmoid",
                     help="use 'sigmoid' for grayscale reconstructions, 'softmax' for boundary segmentation task")   
     ap.add_argument("-d", "--dataset", type=str, default="characters",
-                    help="'charaters' dataset and 'ADE20K' are supported")   
+                    help="'characters' dataset and 'ADE20K' are supported")   
     ap.add_argument("-dev", "--device", type=str, default="cuda:0",
                     help="e.g. use 'cpu' or 'cuda:0' ")   
     ap.add_argument("-n", "--batch_size", type=int, default=30,
                     help="'charaters' dataset and 'ADE20K' are supported")   
+    ap.add_argument("-seq", "--sequence_size", type=int, default=6,
+                    help="'length of sequence in time")  
     ap.add_argument("-opt", "--optimizer", type=str, default="adam",
                     help="only 'adam' is supported for now")   
     ap.add_argument("-lr", "--learning_rate", type=float, default=0.0001,
@@ -184,7 +186,7 @@ def full_fig(*tensors,title=None,classes=None): #img_tensor, phs_tensor, recon_t
                 fig.title(title[j])
             elif title is not None and classes is not None:
                 fig.title(classes[title[j].item()])
-            if img.shape[1]==1 or len(img.shape)==3:
+            if img.shape[1]==1 or len(img.shape)==3 or len(img.shape)==5:
                 im = ax.imshow(np.squeeze(img[j]),cmap='gray',vmin=0,vmax=1)
             elif img.shape[1]==2:    
                 im = ax.imshow(img[j][1],cmap='gray',vmin=0,vmax=1)
@@ -219,7 +221,7 @@ def plot_images(img_tensor,title=None,classes=None):
             plt.title(title[i])
         elif title is not None and classes is not None:
             plt.title(classes[title[i].item()])
-        if img.shape[1]==1 or len(img.shape)==3:
+        if img.shape[1]==1 or len(img.shape)==3 or len(img.shape)==5:
             plt.imshow(np.squeeze(img[i]),cmap='gray',vmin=0,vmax=1)
         elif img.shape[1]==2:    
             plt.imshow(img[i][1],cmap='gray',vmin=0,vmax=1)

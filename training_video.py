@@ -8,13 +8,14 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 # Local dependencies
-import model,utils
+import model_video as model
+import utils
 import local_datasets
 from simulator.simulator import GaussianSimulator
 from simulator.utils import load_params
 from simulator.init import init_probabilistically
 
-from loss_functions import ImageLoss, ZhaoLoss
+from loss_functions_video import ImageLoss, ZhaoLoss
 
 # PyTorch
 import torch
@@ -32,34 +33,34 @@ from matplotlib import pyplot as plt
 def init_models(cfg):
     models = dict()
 
-    if cfg.model_type=='image':
-        models['encoder'] = model.E2E_Encoder(in_channels=cfg.input_channels,
-                                        binary_stimulation=cfg.binary_stimulation).to(cfg.device)
-        models['decoder'] = model.E2E_Decoder(out_channels=cfg.reconstruction_channels,
-                                        out_activation=cfg.out_activation).to(cfg.device)
-    elif cfg.model_type == 'recon_pred':
-        models['encoder'] = model.ZhaoEncoder(in_channels=cfg.input_channels).to(cfg.device)
-        models['recon_decoder'] = model.ZhaoDecoder(out_channels=cfg.reconstruction_channels).to(cfg.device)
-        models['pred_decoder'] = model.ZhaoDecoder(out_channels=cfg.reconstruction_channels).to(cfg.device)
-    else:
-        raise ValueError('invalid model type')
+    # if cfg.model_type=='image':
+    #     models['encoder'] = model.E2E_Encoder(in_channels=cfg.input_channels,
+    #                                     binary_stimulation=cfg.binary_stimulation).to(cfg.device)
+    #     models['decoder'] = model.E2E_Decoder(out_channels=cfg.reconstruction_channels,
+    #                                     out_activation=cfg.out_activation).to(cfg.device)
+    # elif cfg.model_type == 'recon_pred':
+    models['encoder'] = model.ZhaoEncoder(in_channels=cfg.input_channels).to(cfg.device)
+    models['recon_decoder'] = model.ZhaoDecoder(out_channels=cfg.reconstruction_channels).to(cfg.device)
+    models['pred_decoder'] = model.ZhaoDecoder(out_channels=cfg.reconstruction_channels).to(cfg.device)
+    # else:
+    #     raise ValueError('invalid model type')
 
     return models
 
 def init_loss(cfg):
-    if cfg.model_type=='image':
-        loss = ImageLoss(recon_loss_type=cfg.reconstruction_loss,
-                                                recon_loss_param=cfg.reconstruction_loss_param,
-                                                stimu_loss_type=cfg.sparsity_loss,
-                                                phosrep_loss_type=cfg.representation_loss,
-                                                phosrep_loss_param=cfg.representation_loss_param,
-                                                kappa=cfg.kappa,
-                                                device=cfg.device)
-    elif cfg.model_type == 'recon_pred':
-        loss = ZhaoLoss(kappa=cfg.kappa)
+    # if cfg.model_type=='image':
+    #     loss = ImageLoss(recon_loss_type=cfg.reconstruction_loss,
+    #                                             recon_loss_param=cfg.reconstruction_loss_param,
+    #                                             stimu_loss_type=cfg.sparsity_loss,
+    #                                             phosrep_loss_type=cfg.representation_loss,
+    #                                             phosrep_loss_param=cfg.representation_loss_param,
+    #                                             kappa=cfg.kappa,
+    #                                             device=cfg.device)
+    # elif cfg.model_type == 'recon_pred':
+    loss = ZhaoLoss(kappa=cfg.kappa)
     
-    else:
-        raise ValueError('invalid model type')
+    # else:
+    #     raise ValueError('invalid model type')
     return loss
 
 def initialize_components(cfg):
@@ -97,12 +98,14 @@ def initialize_components(cfg):
 
     use_cuda = False if cfg.device=='cpu' else True
     if cfg.simulation_type == 'realistic':
-        # pMap,sigma_0, activation_mask, threshold, thresh_slope, args = init_a_bit_less(use_cuda=use_cuda)
-
-        # models['simulator'] = model.E2E_RealisticPhospheneSimulator(pMap,sigma_0, activation_mask, threshold, thresh_slope, args, device=cfg.device).to(cfg.device)
         params = load_params('simulator/config/params.yaml')
-        r, phi = init_probabilistically(params,n_phosphenes=500)
-        models['simulator'] = model.E2E_RealisticPhospheneSimulator(params, r, phi).to(cfg.device)
+        
+        r, phi = init_probabilistically(params,n_phosphenes=1024)
+        models['simulator'] = model.E2E_RealisticPhospheneSimulator(cfg, params, r, phi).to(cfg.device)
+
+        # params = load_params('simulator/config/params.yaml')
+        # r, phi = init_probabilistically(params,n_phosphenes=500)
+        # models['simulator'] = model.E2E_RealisticPhospheneSimulator(cfg, params, r, phi).to(cfg.device)
     else:
         if cfg.simulation_type == 'regular':
             pMask = utils.get_pMask(jitter_amplitude=0,dropout=False) # phosphene mask with regular mapping
@@ -117,15 +120,16 @@ def initialize_components(cfg):
     dataset = dict()
     if cfg.dataset == 'mnist':
         directory = './datasets/BouncingMNIST/'
-        mode = 'recon' if cfg.model_type=='image' else 'recon_pred' 
+        mode = 'recon_pred' #if cfg.model_type=='image' else 'recon_pred' 
+        print(f'sequence: {cfg.sequence_size}')
         trainset = local_datasets.Bouncing_MNIST(device=cfg.device, directory=directory, mode=mode, n_frames=cfg.sequence_size)
         valset = local_datasets.Bouncing_MNIST(device=cfg.device, directory=directory, mode=mode, n_frames=cfg.sequence_size, validation = True) 
     else:
-        raise ValueError
+        raise ValueError('unknown dataset')
 
-    if cfg.model_type=='image':
-        print(f"setting batch size to 1, using frames as batch dimension (n_frames={cfg.sequence_size})")
-        cfg.batch_size = 1
+    # if cfg.model_type=='image':
+    #     print(f"setting batch size to 1, using frames as batch dimension (n_frames={cfg.sequence_size})")
+    #     cfg.batch_size = 1
 
     dataset['trainloader'] = DataLoader(trainset,batch_size=int(cfg.batch_size),shuffle=True)
     dataset['valloader'] = DataLoader(valset,batch_size=int(cfg.batch_size),shuffle=False)                                 
@@ -370,6 +374,7 @@ def train_recon_pred_model(models, dataset, optimization, train_settings, tb_wri
 
         for i, data in enumerate(tqdm(trainloader), 0):
             input_frames,future_frames = data
+            # print(input_frames.shape, future_frames.shape)
             # plt.imshow(input_frames[0,0,0,:,:])
             # plt.colorbar()
             # plt.show()
@@ -387,7 +392,15 @@ def train_recon_pred_model(models, dataset, optimization, train_settings, tb_wri
             # print(f"stimulation: {stimulation.shape}")
             # proxy_stim = 30*torch.ones_like(stimulation)
             # phosphenes  = simulator(stimulation)
-            phosphenes=stimulation
+            first_phosphenes = simulator(stimulation[:,0,:].squeeze(dim=1))
+            phos_shape = first_phosphenes.shape
+            phosphenes = torch.zeros((phos_shape[0],phos_shape[1],stimulation.shape[1],phos_shape[2],phos_shape[3]),device=simulator.device)
+            phosphenes[:,:,0,:,:] = first_phosphenes
+            for t in range(1,cfg.sequence_size):
+                phosphenes[:,:,t,:,:] = simulator(stimulation[:,t,:].squeeze(dim=1))
+            # print(f"phosphenes shape: {phosphenes.size()}")
+            simulator.reset()
+
             # print(f"phosphenes: {phosphenes.shape}")
             reconstruction = recon_decoder(phosphenes)
             # print(f"reconstruction: {reconstruction.shape}")
@@ -425,37 +438,57 @@ def train_recon_pred_model(models, dataset, optimization, train_settings, tb_wri
                 # print(stimulation)
                 count_val+=1
                 try:
-                    input_frames,future_frames = next(iter(valloader))
-                    # print(label)
+                    sample_iter = np.random.randint(0,len(valloader))
+                    for j, data in enumerate(tqdm(valloader, leave=False, position=0, desc='Validation'), 0):
+                        input_frames,future_frames = next(iter(valloader))
+                        # print(label)
 
-                    encoder.eval()
-                    recon_decoder.eval()
-                    pred_decoder.eval()
+                        encoder.eval()
+                        recon_decoder.eval()
+                        pred_decoder.eval()
 
-                    with torch.no_grad():
+                        with torch.no_grad():
 
-                        # 1. Forward pass
-                        stimulation = encoder(input_frames)
-                        # phosphenes  = simulator(stimulation)
-                        phosphenes = stimulation
-                        reconstruction = recon_decoder(phosphenes)
-                        prediction = pred_decoder(phosphenes)
+                            # 1. Forward pass
+                            stimulation = encoder(input_frames)
+                            # phosphenes  = simulator(stimulation)
+                            # phosphenes = stimulation
 
-                        # 2. Loss
-                        stats = loss_function(input_frames = input_frames,
-                                            future_frames = future_frames,
-                                            phosphenes=phosphenes,
-                                            reconstruction=reconstruction,
-                                            prediction=prediction,
-                                            validation=True)            
-  
+                            first_phosphenes = simulator(stimulation[:,0,:].squeeze(dim=1))
+                            phos_shape = first_phosphenes.shape
+                            phosphenes = torch.zeros((phos_shape[0],phos_shape[1],stimulation.shape[1],phos_shape[2],phos_shape[3]),device=simulator.device)
+                            phosphenes[:,:,0,:,:] = first_phosphenes
+                            for t in range(1,cfg.sequence_size):
+                                phosphenes[:,:,t,:,:] = simulator(stimulation[:,t,:].squeeze(dim=1))
+                            simulator.reset()
+
+                            reconstruction = recon_decoder(phosphenes)
+                            prediction = pred_decoder(phosphenes)
+
+                            if j==sample_iter: #save for plotting
+                                sample_img = input_frames.permute((0,4,1,2,3))
+                                sample_phos = phosphenes.permute((0,4,1,2,3))#.permute((2,0,1))
+                                sample_recon = reconstruction.permute((0,4,1,2,3))#.permute((2,0,1))
+                                sample_fut = future_frames.permute((0,4,1,2,3))#.permute((2,0,1))
+                                sample_pred = prediction.permute((0,4,1,2,3))#.permute((2,0,1))
+
+                            # 2. Loss
+                            stats = loss_function(input_frames = input_frames,
+                                                future_frames = future_frames,
+                                                phosphenes=phosphenes,
+                                                reconstruction=reconstruction,
+                                                prediction=prediction,
+                                                validation=True)            
+
+                    reset_train = True if i==len(trainloader) else False #reset running losses if at end of loop, else keep going
+                    stats = loss_function.get_stats(reset_train,reset_val=True) #reset val loss always after validation loop completes
+
                     tb_writer.add_scalars(f'{model_name}/Loss/validation', {key: stats[key][-1] for key in ['val_recon_loss','val_pred_loss','val_total_loss']}, epoch * len(trainloader) + i) #,'val_phosrep_loss'
                     tb_writer.add_scalars(f'{model_name}/Loss/training', {key: stats[key][-1] for key in ['tr_recon_loss','tr_pred_loss','tr_total_loss']}, epoch * len(trainloader) + i) #,'tr_phosrep_loss'
-                    # sample = np.random.randint(0,input_frames.shape[0],5)
-                    sample = np.random.randint(0,input_frames.shape[0],1)
-                    fig = utils.full_fig(input_frames[sample,:,:5],reconstruction[sample,:,:5],future_frames[sample,:,:5],prediction[sample,:,:5]) #phosphenes[sample]
-                    fig.show()
-                    tb_writer.add_figure(f'{model_name}/predictions, phosphenes,reconstruction',fig,epoch * len(trainloader) + i)  
+                    sample = np.random.randint(0,input_frames.shape[0],min(input_frames.shape[0],5))
+                    # fig = utils.full_fig(sample_img[sample[0]],sample_phos[sample[0]],sample_recon[sample[0]],sample_fut[sample[0]],sample_pred[sample[0]]) #phosphenes[sample]
+                    # fig.show()
+                    # tb_writer.add_figure(f'{model_name}/predictions, phosphenes,reconstruction',fig,epoch * len(trainloader) + i)  
 
                     
                     # 5. Save model (if best)
@@ -471,6 +504,12 @@ def train_recon_pred_model(models, dataset, optimization, train_settings, tb_wri
                         savepath = os.path.join(savedir,model_name + '_best_pred_decoder.pth' )#'_e%d_decoder.pth' %(epoch))#,i))
                         logger('Saving to ' + savepath + '...')
                         torch.save(pred_decoder.state_dict(), savepath)
+
+                        for tag,img in zip(['orig','phos','recon','fut','pred'],[sample_img[sample],sample_phos[sample],sample_recon[sample],sample_fut[sample],sample_pred[sample]]):
+                            savepath = os.path.join(savedir,model_name + '_'+tag+'_imgs.npy' )
+                            img = img.detach().cpu().numpy()
+                            with open(savepath, 'wb') as f:
+                                np.save(f, img)
                         
                         n_not_improved = 0
                     else:
@@ -505,10 +544,13 @@ if __name__ == '__main__':
     print(cfg)
     models, dataset, optimization, train_settings = initialize_components(cfg)
     writer = SummaryWriter()
-    if cfg.model_type=='image':
-        train_image_model(models, dataset, optimization, train_settings, writer)
-    elif cfg.model_type=='recon_pred':
-        train_recon_pred_model(models, dataset, optimization, train_settings, writer)
-    else:
-        raise ValueError('invalid model type')
+    writer.add_text("Config", cfg.to_string(), global_step=0)
+    writer.add_text("Video_model", 'relu output, binned stim')
+
+    # if cfg.model_type=='image':
+    #     train_image_model(models, dataset, optimization, train_settings, writer)
+    # elif cfg.model_type=='recon_pred':
+    train_recon_pred_model(models, dataset, optimization, train_settings, writer)
+    # else:
+    #     raise ValueError('invalid model type')
 

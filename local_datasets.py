@@ -41,16 +41,13 @@ class Bouncing_MNIST(Dataset):
 
         self.device = device
         self.mode = mode
-        self.imsize = imsize,
-        self.n_frames = n_frames,
+        self.imsize = imsize
+        self.n_frames = n_frames
         # self.validation = validation
 
         full_set = np.load(directory+'mnist_test_seq.npy').transpose(1, 0, 2, 3)
         # full_set = full_set[:100] #TODO: remove
-        # print(full_set.shape)
-        #normalize
-        # full_set = full_set/255.
-        # full_set = torch.from_numpy(full_set)
+        
         if self.mode=='recon':
             if n_frames<full_set.shape[1]:
                 divisor = int(full_set.shape[1]/n_frames)
@@ -76,8 +73,8 @@ class Bouncing_MNIST(Dataset):
             frames = T.Resize(128)(self.input[i]/255.)
             return frames.detach().to(self.device)
         elif self.mode == 'recon_pred':
-            input_frames = T.Resize(128)(self.input[i,:,:self.n_frames/2]/255.)#.to(self.device)
-            future_frames = T.Resize(128)(self.input[i,:,self.n_frames/2+1:]/255.)#.to(self.device)
+            input_frames = T.Resize(128)(self.input[i,:,:self.n_frames]/255.)#.to(self.device)
+            future_frames = T.Resize(128)(self.input[i,:,self.n_frames:self.n_frames*2]/255.)#.to(self.device)
             return input_frames.detach().to(self.device), future_frames.detach().to(self.device)
             
 class ADE_Dataset(Dataset):

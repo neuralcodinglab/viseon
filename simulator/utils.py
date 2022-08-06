@@ -107,6 +107,11 @@ def webcam_demo(simulator, params, resolution=(256,256)):
         if time_elapsed > 1./FRAMERATE:
             prev = time.time()
 
+            # Square input
+            # if frame.shape[0] != frame.shape[1]:
+                # shortest_side = min(frame.shape)
+                # frame = frame[frame.shape[0]//2-shortest_side//2:frame.shape[0]//2+shortest_side//2,frame.shape[1]//2-shortest_side//2:frame.shape[1]//2+shortest_side//2]
+
             # Create Canny edge detection mask
             frame = cv2.resize(frame, RESOLUTION)
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -116,6 +121,8 @@ def webcam_demo(simulator, params, resolution=(256,256)):
                 processed_img = sobel_processor(frame)
             elif params['sampling']['filter'] == 'canny':
                 processed_img = canny_processor(frame,params['sampling']['T_high']//2,params['sampling']['T_high'])
+            elif params['sampling']['filter'] == 'none':
+                processed_img = frame
             else:
                 raise ValueError(f"{params['sampling']['filter']} is not a valid filter keyword")
                 
@@ -127,8 +134,8 @@ def webcam_demo(simulator, params, resolution=(256,256)):
             else:
                 raise ValueError(f"{params['sampling']['sampling_method']} is not a valid sampling method")
 
-            phs = simulator(stim_pattern.view(1,-1)).clamp(0,1) # DISCUSS: clamping is necessary due to summing the phosphenes, what to do?
-            phs = np.squeeze(phs).cpu().numpy()*255
+            phs = simulator(stim_pattern.view(1,-1))
+            phs = np.squeeze(phs.cpu().numpy())*255
 
             # Concatenate results
             cat = np.concatenate([frame, processed_img, phs], axis=1).astype('uint8')
@@ -184,15 +191,27 @@ def process_video(simulator, params, video_path, save_path, n_frames = None, tim
             frame = cv2.resize(frame, sim_resolution)
             frame = cv2.GaussianBlur(frame, (3,3), 0)
 
-            # edge/contour detector
-            # processed_img = canny_processor(frame,T_HIGH//2,T_HIGH)
-            processed_img = sobel_processor(frame)
-            processed_img = frame
-            stim_pattern = sample_receptive_fields(processed_img, simulator.sampling_mask).view(1,-1).to(device)
-            # stim_pattern = sample_centers(processed_img, simulator.pMap)
+            if params['sampling']['filter'] == 'sobel':
+                processed_img = sobel_processor(frame)
+            elif params['sampling']['filter'] == 'canny':
+                processed_img = canny_processor(frame,params['sampling']['T_high']//2,params['sampling']['T_high'])
+            elif params['sampling']['filter'] == 'none':
+                processed_img = frame
+            else:
+                raise ValueError(f"{params['sampling']['filter']} is not a valid filter keyword")
+                
+            # Generate phosphenes 
+            if params['sampling']['sampling_method'] == 'receptive_fields': 
+                stim_pattern = sample_receptive_fields(processed_img, simulator.sampling_mask)
+            elif params['sampling']['sampling_method'] == 'center':
+                stim_pattern = sample_centers(processed_img, simulator.pMap)
+            else:
+                raise ValueError(f"{params['sampling']['sampling_method']} is not a valid sampling method")
+
+            stim_pattern = stim_pattern.view(1,-1).to(device)
 
             # Generate phosphenes 
-            phs = simulator(stim_pattern)
+            phs = simulator(stim_pattern).clamp(0,1)
             phs = phs.squeeze().cpu().numpy()*255
 
             if save_history:

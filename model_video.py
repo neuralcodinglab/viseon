@@ -19,7 +19,7 @@ class PrintLayer(nn.Module):
     
     def forward(self, x):
         # Do your print / debug stuff here
-        print(x.shape)
+        print(f"shape of output: {x.shape}")
         return x
 
 def convlayer3d(n_input, n_output, k_size=3, stride=1, padding=1, resample_out=None):
@@ -120,7 +120,7 @@ class E2E_Encoder(nn.Module):
     """
     Simple non-generic encoder class that receives 128x128 input and outputs 32x32 feature map as stimulation protocol
     """   
-    def __init__(self, in_channels=3, out_channels=1,binary_stimulation=True):
+    def __init__(self, in_channels=3, out_channels=1024,binary_stimulation=True):
         super(E2E_Encoder, self).__init__()
              
         self.binary_stimulation = binary_stimulation
@@ -134,9 +134,9 @@ class E2E_Encoder(nn.Module):
                                    ResidualBlock2d(32, resample_out=None),
                                    ResidualBlock2d(32, resample_out=None),
                                    *convlayer2d(32,16,3,1,1),
-                                   nn.Conv2d(16,out_channels,3,1,1),
+                                   nn.Conv2d(16,1,3,1,1),
                                    nn.Flatten(),
-                                   nn.Linear(1024,1024),
+                                   nn.Linear(1024,out_channels),
                                    nn.ReLU()
                                 #    nn.Softplus() #TODO: non-binary stimulation 
                                 #    nn.Tanh()
@@ -145,13 +145,16 @@ class E2E_Encoder(nn.Module):
 
     def forward(self, x):
         self.out = self.model(x)
-        # x = self.out
+        x = self.out
+
+        stimulation = x
         if self.binary_stimulation:
             x = x + torch.sign(x).detach() - x.detach() # (self-through estimator) #TODO: non-binary stimulation 
-            
+        
+        stimulation = stimulation*1e-4
         # stimulation = .5*(x+1) #why?
         # stimulation = stimulation*50.
-        stimulation = self.out
+        # stimulation = self.out
         
         return stimulation    
     
@@ -190,33 +193,46 @@ class ZhaoEncoder(nn.Module):
         super(ZhaoEncoder, self).__init__()
 
         self.model = nn.Sequential(
-            *convlayer3d(in_channels,32,3,1,1, resample_out=nn.MaxPool3d(2,(0,2,2),dilation=(0,1,1))),
-            *convlayer3d(32,48,3,1,1, resample_out=nn.MaxPool3d(2,(0,2,2),dilation=(0,1,1))),
+            *convlayer3d(in_channels,32,3,1,1, resample_out=nn.MaxPool3d(2,(1,2,2),padding=(1,0,0),dilation=(2,1,1))),
+            *convlayer3d(32,48,3,1,1, resample_out=nn.MaxPool3d(2,(1,2,2),padding=(1,0,0),dilation=(2,1,1))),
             *convlayer3d(48,64,3,1,1),#, resample_out=nn.MaxPool3d(2,(0,2,2),dilation=(0,1,1))),
-            *convlayer3d(64,64,3,1,1),
+            *convlayer3d(64,1,3,1,1),
+            # PrintLayer(),
             # nn.Conv3d(64,out_channels,3,1,1),
-            nn.Flatten(),
-            nn.Linear(512,1024),
+            nn.Flatten(start_dim=3),
+            # PrintLayer(),
+            nn.Linear(1024,1024),
+            # PrintLayer(),
             nn.ReLU()
         )
 
     def forward(self, x):
         self.out = self.model(x)
+        self.out = self.out.squeeze(dim=1)
+        self.out = self.out*1e-4
         return self.out
 
 class ZhaoDecoder(nn.Module):
-    def __init__(self, in_channels=64, out_channels=1):
+    def __init__(self, in_channels=1, out_channels=1):
         super(ZhaoDecoder, self).__init__()
 
+        # self.model = nn.Sequential(
+        #     *deconvlayer3d(in_channels,48,2,(1,2,2),0,(0,1,1)),
+        #     PrintLayer(),
+        #     *deconvlayer3d(48,32,(1,2,2),0,(0,1,1)),
+        #     PrintLayer(),
+        #     *deconvlayer3d(32,32,2,(1,1,1),0,(0,0,0)),
+        #     PrintLayer(),
+        #     nn.Conv3d(32,out_channels,3,1,1),
+        #     nn.Sigmoid()
+        # )
+
         self.model = nn.Sequential(
-            *deconvlayer3d(in_channels,48,2,(1,2,2),0,(0,1,1)),
-            PrintLayer(),
-            *deconvlayer3d(48,32,(1,2,2),0,(0,1,1)),
-            PrintLayer(),
-            *deconvlayer3d(32,32,2,(1,1,1),0,(0,0,0)),
-            PrintLayer(),
-            nn.Conv3d(32,out_channels,3,1,1),
-            nn.Sigmoid()
+            *convlayer3d(in_channels,16,3,1,1),
+            *convlayer3d(16,32,3,1,1),
+            *convlayer3d(32,64,3,(1,2,2),1),
+            *convlayer3d(64,32,3,1,1),
+            nn.Conv3d(32,out_channels,3,1,1)
         )
 
     def forward(self, x):
@@ -293,26 +309,44 @@ class V2V_Recon_Decoder(nn.Module):
     
 class E2E_RealisticPhospheneSimulator(nn.Module):
     """A realistic simulator, using stimulation vectors to form a phosphene representation
-    in: a 32x32 stimulation vector #TODO: flatten before inputting?
+    in: a 1024 length stimulation vector
     out: 256x256 phosphene representation
     """
-    def __init__(self, pMap,sigma_0, activation_mask, threshold, thresh_slope, args, device=torch.device('cuda:0')):
-    #pMask,scale_factor=8, sigma=1.5,kernel_size=11, intensity=15, device=torch.device('cuda:0')):
+    def __init__(self, cfg, params, r, phi):
         super(E2E_RealisticPhospheneSimulator, self).__init__()
-        
-        # use_cuda = False if device == 'cpu' else True
-
-        self.simulator = GaussianSimulator(pMap, sigma_0, activation_mask, threshold, thresh_slope, **args)
+        self.device = cfg.device
+        self.simulator = GaussianSimulator(params, r, phi, batch_size=cfg.batch_size, device=cfg.device)
 
     def forward(self, stimulation):
-        # stim = stimulation.flatten(start_dim=1)
-        # print(f"stim shape before entering simulator: {stimulation.shape}")
-        phosphenes = self.simulator(stim=stimulation*100).clamp(0,150)
-        # print(f"phosphene shape after flatten: {phosphenes.shape}")
-        phosphenes = phosphenes/150  #phosphenes.max()
-        
+        phosphenes = self.simulator(stim_amp=stimulation).clamp(0,1)        
         phosphenes = phosphenes.view(phosphenes.shape[0], 1, phosphenes.shape[1], phosphenes.shape[2])
         return phosphenes
+
+    def reset(self):
+        self.simulator.reset()
+
+# class E2E_RealisticPhospheneSimulator(nn.Module):
+#     """A realistic simulator, using stimulation vectors to form a phosphene representation
+#     in: a 32x32 stimulation vector #TODO: flatten before inputting?
+#     out: 256x256 phosphene representation
+#     """
+#     def __init__(self, pMap,sigma_0, activation_mask, threshold, thresh_slope, args, device=torch.device('cuda:0')):
+#     #pMask,scale_factor=8, sigma=1.5,kernel_size=11, intensity=15, device=torch.device('cuda:0')):
+#         super(E2E_RealisticPhospheneSimulator, self).__init__()
+        
+#         # use_cuda = False if device == 'cpu' else True
+
+#         self.simulator = GaussianSimulator(pMap, sigma_0, activation_mask, threshold, thresh_slope, **args)
+
+#     def forward(self, stimulation):
+#         # stim = stimulation.flatten(start_dim=1)
+#         # print(f"stim shape before entering simulator: {stimulation.shape}")
+#         phosphenes = self.simulator(stim=stimulation*100).clamp(0,150)
+#         # print(f"phosphene shape after flatten: {phosphenes.shape}")
+#         phosphenes = phosphenes/150  #phosphenes.max()
+        
+#         phosphenes = phosphenes.view(phosphenes.shape[0], 1, phosphenes.shape[1], phosphenes.shape[2])
+#         return phosphenes
 
 
 class E2E_PhospheneSimulator(nn.Module):

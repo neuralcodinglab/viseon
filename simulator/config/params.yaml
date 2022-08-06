@@ -1,11 +1,11 @@
 # run settings
 run:
   resolution: [256,256] #[width,height] in pixels
-  view_angle: 20 #in degrees, horizontal view angle
+  view_angle: 16 #in degrees, horizontal view angle
   fps: 35
   gpu: null #if using cuda, enter gpu nr here (e.g. 0)
   video: False
-  print_stats: False
+  print_stats: False #print simulator values for sanity check
 
 # stimulation params, used in encoder
 encoding:
@@ -23,19 +23,19 @@ display:
 sampling:
   RF_size: 0.4 #mm cortex 
   use_relative_RF_size: True
-  filter: sobel #canny or sobel
+  filter: sobel #canny, sobel or none
   T_high: 120 # in case of canny filtering: the high threshold
   sampling_method: receptive_fields #receptive_fields or center
   
 # settings for electrode coords to visual field coords
 cortex_model:
-  model: monopole
+  model: dipole
   k: 17.3
   a: 0.75
-  b: null
-  alpha: null
+  b: 120
+  alpha: 0.95
   dropout_rate: 0.0
-  noise_scale: 0.0
+  noise_scale: 0.4
   
 # habituation and other temporal dynamics  
 temporal_dynamics:
@@ -47,25 +47,26 @@ temporal_dynamics:
   trace_fast_increase_rate: 1.4 # how much the trace increases when there is input, per second
 
 # current strength effect on size (Bosking et al., 2017),   
-size_saturation:
+size:
+  size_equation: sigmoid #which equation to use for current->size computations. sqrt or sigmoid
   MD: 0.7  # predicted maximum diameter of activated cortex in mm
   I_half: 40 # mu-A
   slope_size: 0.08 # slope of size saturation curve in mm/mu-A
   current_spread: 675.e-6 #A/mm2
+  radius_to_sigma: 0.5 #circle to gaussian factor, sigma = r/2
 
 # sigmoid on activation  
 brightness_saturation:
-  cps_half: 2.8e-6 #nC/s, calibrated on fig. 6A Fernández et al., (2021) 
-  slope_brightness: 0.2e+7 #0.4e+6 (for tanh) #calibrated on fig. 6A/B Fernández et al., (2021)
+  cps_half: 1.30e-6 #2.49e-6 #nC/s, calibrated on fig. 6A Fernández et al., (2021) 
+  slope_brightness: 0.16e+7 #0.14e+7 #0.4e+6 (for tanh) #calibrated on fig. 6A/B Fernández et al., (2021)
   
 # Stimulation threshold
 thresholding:
   use_threshold: True
   rheobase: 23.9e-6
   chronaxie: 44.5e-3
-  threshold_sd: 0.5e-6
+  threshold_sd: 0.5e-6 #threshold variation. Threshold is calculated as rheobase*chronaxie
   range_slope: [0.1e+7,0.5e+7] #slope of psychometric curve
-  #range_thresh: [0.7e-6,5.8e-6] #range of threshold values in charge per second, Fernández's mean threshold +/- two standard deviations
         
 # Pulse width (pw), frequency (freq) default values, in case they aren't specified in the input
 default_stim:
