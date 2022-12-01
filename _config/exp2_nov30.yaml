@@ -1,0 +1,51 @@
+Description:
+    model_name: exp2_boundary_nov30
+
+general: 
+    use_deterministic_algorithms: False
+    batch_size: 4
+    device: 'cuda:0' 
+    gpu : 0
+    save_path : ./Out/Exp2_Nov30
+    save_output: [phosphenes, stimulation, reconstruction]
+    
+simulator:
+    base_config: ../../config/params.yaml
+    use_threshold: False
+    phosphene_map: ../../config/DefaultCoordinateMap_1000_phosphenes.pickle
+    
+e2e_models:
+    model_architecture: end-to-end-autoencoder # choose from end-to-end-autoencoder, zhao-autoencoder
+    in_channels: 1
+    n_electrodes: 1000
+    output_scaling: 128.0e-6
+    output_steps: 10
+    out_channels: 1
+    out_activation: sigmoid
+
+optimization:
+    learning_rate : 0.0005
+    epochs : 16
+    trainstats_per_epoch : 24
+    validations_per_epoch: 8
+    early_stop_criterium : 15
+
+training_pipeline:
+    pipeline: supervised-boundary-reconstruction
+    regularization_weight: 0.99999  # relative weight for enforcing interpretable (supervised) phosphene encodings
+    
+
+dataset:
+    dataset: ADE50K
+    data_directory : ../../../_Datasets/ADE20K/
+    load_preprocessed: True # for the ADE50k dataset:
+    sequence_length: 5 # for the BouncingMNIST dataset:
+    mode: recon # for the BouncingMNIST dataset:
+    
+    
+
+
+    
+    
+
+
