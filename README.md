@@ -6,6 +6,7 @@ https://surfdrive.surf.nl/files/index.php/s/vMG4UuJHo0njlWH
 
 ## Publication
 Our preprint can be cited as:
+
 van der Grinten, M., de Ruyter van Steveninck, J., Lozano, A., Pijnacker, L., Rückauer, B., Roelfsema, P., van Gerven, M., van Wezel, R., Güçlü, U., &amp; Güçlütürk, Y. (2022). Biologically plausible phosphene simulation for the differentiable optimization of visual cortical prostheses. https://doi.org/10.1101/2022.12.23.521749 
 
 
