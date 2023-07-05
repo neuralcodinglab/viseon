@@ -7,28 +7,27 @@ import math
 def get_e2e_autoencoder(cfg):
 
     # initialize encoder and decoder
-    if cfg['output_steps'] is not None:
-        encoder = torch.nn.Sequential(E2E_Encoder(in_channels=cfg['in_channels'],
-                                                        n_electrodes=cfg['n_electrodes'],
-                                                        out_scaling=1.,
-                                                        out_activation='sigmoid'),
-                                      SafetyLayer(n_steps=10,
-                                                        order=2,
-                                                        out_scaling=cfg['output_scaling'])).to(cfg['device'])
-    else:
-        encoder = E2E_Encoder(in_channels=1,
-                                    n_electrodes=cfg['n_electrodes'],
-                                    out_scaling=cfg['output_scaling'],
-                                    out_activation='relu').to(cfg['device'])
+    encoder = E2E_Encoder(in_channels=cfg['in_channels'],
+                          n_electrodes=cfg['n_electrodes'],
+                          out_scaling=cfg['output_scaling'],
+                          out_activation=cfg['encoder_out_activation']).to(cfg['device'])
 
     decoder = E2E_Decoder(out_channels=cfg['out_channels'],
-                          out_activation=cfg['out_activation']).to(cfg['device'])
-
+                          out_activation=cfg['decoder_out_activation']).to(cfg['device'])
+    
+    # If output steps are specified, add safety layer at the end of the encoder model 
+    if cfg['output_steps'] != 'None':
+        assert cfg['encoder_out_activation'] == 'sigmoid'
+        encoder.output_scaling = 1.0
+        encoder = torch.nn.Sequential(encoder,
+                                      SafetyLayer(n_steps=10,
+                                                  order=2,
+                                                  out_scaling=cfg['output_scaling'])).to(cfg['device'])
     return encoder, decoder
 
 def get_Zhao_autoencoder(cfg):
     encoder = ZhaoEncoder(in_channels=cfg['in_channels'], n_electrodes=cfg['n_electrodes']).to(cfg['device'])
-    decoder = ZhaoDecoder(out_channels=cfg['out_channels'], out_activation=cfg['out_activation']).to(cfg['device'])
+    decoder = ZhaoDecoder(out_channels=cfg['out_channels'], out_activation=cfg['decoder_out_activation']).to(cfg['device'])
 
     return encoder, decoder
 

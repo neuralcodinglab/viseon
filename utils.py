@@ -44,6 +44,10 @@ def normalize(x):
     """scale to range [0, 1]"""
     return (x - x.min()) / (x.max()-x.min())
 
+def undo_standardize(x, mean=0.459, std=0.227):
+    """maps standardized grayscale images to range [0, 1]"""
+    return (x*std+mean).clip(0,1)
+
 def load_config(yaml_file):
     with open(yaml_file) as file:
         raw_content = yaml.load(file,Loader=yaml.FullLoader) # nested dictionary
