@@ -12,8 +12,9 @@ from PIL import Image, ImageFont, ImageDraw
 import cv2 as cv
 import string
 import utils
+import contextlib
 
-
+        
 class ADE_Dataset(Dataset):
     
     def __init__(self, directory='../_Datasets/ADE20K/',
@@ -72,13 +73,13 @@ class ADE_Dataset(Dataset):
         to_grayscale = self.to_grayscale #lambda image : image.mean(axis=0,keepdims=True)
         to_cv2_list  = lambda image_tensor : [np.squeeze((255*img.cpu().numpy())).astype('uint8') for img in image_tensor]
         canny_edge   = lambda image_list : [cv.Canny(img,10,10)/255 for img in image_list]
-        to_tensor    = lambda image_list : torch.tensor(image_list, dtype=torch.long)
+        to_tensor    = lambda image_list : torch.tensor(image_list,dtype=torch.float)# dtype=torch.long)
         squeeze_img  = lambda image_tensor : torch.squeeze(image_tensor)
         self.contour = T.Compose([T.Lambda(to_grayscale),
                                   T.Lambda(to_cv2_list),
                                   T.Lambda(canny_edge),
-                                  T.Lambda(to_tensor),
-                                  T.Lambda(squeeze_img)])
+                                  T.Lambda(to_tensor),])
+                                  #T.Lambda(squeeze_img)]) # Squeezed target tensors are deprecated for Torch BCE loss
         
     def __len__(self):
         return len(self.input_files)
@@ -142,7 +143,7 @@ class Character_Dataset(Dataset):
         self.data = val_data if validation else train_data
         self.classes = characters
         self.lookupletter = {letter: torch.tensor(index) for index, letter in enumerate(characters)}
-        self.padding_correction = 6 #By default, PILs ImageDraw function uses excessive padding                                                          
+        self.padding_correction = np.array([6,20]) #By default, PILs ImageDraw function uses excessive padding                                                          
     def __len__(self):
         return len(self.data)
 
@@ -171,8 +172,14 @@ class Character_Dataset(Dataset):
         # Draw character at random position
         img = Image.fromarray(255*np.ones(self.imsize).astype('uint8'))
         draw = ImageDraw.Draw(img)
-        location = np.random.rand(2)*(free_space)
-        location[1]-= self.padding_correction
+        if self.validation:
+            location = np.random.rand(2)*(free_space)
+#             with temp_seed(666):
+#                 location = np.array([0.45,0.70])*(free_space)
+#                 location = np.random.rand(2)*(free_space)
+        else:
+            location = np.random.rand(2)*(free_space)
+        location[1]-= self.padding_correction[1]
         draw.text(location,c,(0,),font=font)       
         img = self.tensormaker(img)
         
@@ -180,3 +187,43 @@ class Character_Dataset(Dataset):
         if self.invert:
             img = 1-img
         return img.to(self.device), lbl.to(self.device)
+
+
+@contextlib.contextmanager
+def temp_seed(seed):
+    state = np.random.get_state()
+    np.random.seed(seed)
+    try:
+        yield
+    finally:
+        np.random.set_state(state)
+        
+        
+class HED_Dataset(Dataset):
+    
+    def __init__(self, directory='datasets/HED20k/',
+                 device=torch.device('cuda:0'),
+                 img_kind = 'img',
+                 trg_kind = 'lbl',
+                 validation=False):
+        self.device = device
+        files = {k : sorted(glob(os.path.join(directory,'{}/*.png'.format(k)))) for k in ['img','ced','hed','lbl']}
+        
+        # Image and target files
+        if validation:
+            self.input_files  = files[img_kind][-2000:]
+            self.target_files = files[trg_kind][-2000:]
+        else:
+            self.input_files  = files[img_kind][:-2000]
+            self.target_files = files[trg_kind][:-2000]
+    
+    def __len__(self):
+        return len(self.input_files)
+
+    def __getitem__(self, i):
+        
+        # Load Image, Label
+        x = F.to_tensor(Image.open(self.input_files[i]).convert("L"))
+        t = F.to_tensor(Image.open(self.target_files[i]).convert("L"))
+            
+        return x.detach().to(self.device),t.detach().to(self.device) 

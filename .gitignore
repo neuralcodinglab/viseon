@@ -1,0 +1,8 @@
+*.log
+out/
+*.ipynb*
+__pycache__
+_Archive/
+*_[Aa]rchived*
+*model_parameters
+datasets/*

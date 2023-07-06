@@ -13,7 +13,9 @@ from torch.utils.data import Dataset, DataLoader
 from skimage.metrics import structural_similarity
 from skimage.metrics import mean_squared_error
 from skimage.metrics import peak_signal_noise_ratio
-
+import image_similarity_measures
+from image_similarity_measures.quality_metrics import fsim as feature_similarity
+from sklearn.metrics import roc_auc_score
 
 def read_train_stats(filename, delimiter=','):
     """Reads the csv file with training statistics into pandas DataFrame and returns
@@ -29,30 +31,10 @@ def read_train_stats(filename, delimiter=','):
     train_stats = pd.melt(stats,id_vars=['epoch'],value_vars=value_vars)
     return train_stats, best_result        
 
-def segmentation_metrics(pred, label):
-    """ Calculate sensitivity, specificity, precision and accuray from softmax 
-    prediction (tensor) and ground truth target (tensor)"""
-    # Prediction
-    pred = pred.argmax(axis=1)
-
-    # Confusion quadrants
-    tp = pred[label==1].sum().float()
-    fp = pred[label==0].sum().float()
-    fn = label[pred==0].sum().float()
-    tn = (label[pred==0] == 0).sum().float()
-
-    # Performance metrics 
-    sens = tp/(tp+fn)
-    spec = tn/(tn+fp)
-    prec = tp/(tp+fp)
-    acc  = (tp + tn) / label.numel()
-    return pd.Series({'sensitivity': sens, 'specificity': spec, 'precision': prec, 'accuracy': acc})
-
-
-def evaluate_saved_model(cfg, visualize=None, savefig=False):
+def evaluate_saved_model(cfg, visualize=None, savefig=False, seed=0):
     """ loads the saved model parametes for given configuration <cfg> and returns the performance
-    metrics on the validation dataset. The <visualize> argument can be set equal to any positive
-    integer that represents the amount of example figures to plot."""
+    metrics on the validation dataset. The <visualize> argument can used for passing a list of 
+    integers that represent example images to plot."""
     # Load configurations
     models, dataset, optimization, train_settings = training.initialize_components(cfg)
     encoder = models['encoder']
@@ -67,51 +49,138 @@ def evaluate_saved_model(cfg, visualize=None, savefig=False):
     encoder.eval()
     decoder.eval()
     
-    # Forward pass (validation set)
-    image,label = next(iter(valloader))
-    with torch.no_grad():
-        stimulation = encoder(image)
-        phosphenes  = simulator(stimulation)
-        reconstruction = decoder(phosphenes)    
+    n_processed = 0
+    metrics = None
+    BATCH_SIZE = 100 # Default batch size is 100 for evaluation 
     
+    torch.manual_seed(seed)
+    np.random.seed(seed)
     
-    # Visualize results
     if visualize is not None:
         n_figs = 4 if cfg.reconstruction_loss == 'boundary' else 3
-        n_examples = visualize
-        plt.figure(figsize=(n_figs,n_examples),dpi=200)
+        n_examples = len(visualize)
+        plt.figure(figsize=(n_figs,n_examples),dpi=300)
+        i = 0
+        
+    # Forward pass (validation set)
+    for batch, data in enumerate(valloader, 0):
+        image,label = data
+        with torch.no_grad():
+            stimulation = encoder(image)
+            phosphenes  = simulator(stimulation)
+            reconstruction = decoder(phosphenes)
+        
+        # Undo normalization (if necessary)
+        if image.min()<0:
+            if image.shape[1]==3:
+                normalizer = utils.TensorNormalizer(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            elif image.shape[1]==1:
+                normalizer = utils.TensorNormalizer(mean=0.459, std=0.227)
+            image = normalizer.undo(image)
+            reconstruction = normalizer.undo(reconstruction) if lossfunc.target == 'image' else reconstruction
+        
+        # Calculate the performance metrics (perc. active electrodes, IQA, seqm. performance)
+        pred = reconstruction
+        targ = image if lossfunc.target == 'image' else label
+        
+        if metrics is None:
+            # calculate performance metrics
+            metrics = performance_metrics(stimulation, pred, targ, targ_type=lossfunc.target)
+            n_processed = len(image)
+        else:
+            # update with new metrics
+            new_metrics = performance_metrics(stimulation, pred, targ, targ_type=lossfunc.target)
+            metrics = (metrics*n_processed + new_metrics*len(image))/(n_processed + len(image)) #avg. over all metrics
+            n_processed = n_processed + len(image)
 
-        for i in range(n_examples):
-            plt.subplot(n_examples,n_figs,n_figs*i+1)
-            plt.imshow(image[i].squeeze().cpu().numpy(),cmap='gray')
-            plt.axis('off')
-            plt.subplot(n_examples,n_figs,n_figs*i+2)
-            plt.imshow(phosphenes[i].squeeze().cpu().numpy(),cmap='gray')
-            plt.axis('off')
-            plt.subplot(n_examples,n_figs,n_figs*i+3)
-            plt.imshow(reconstruction[i][0].squeeze().cpu().numpy(),cmap='gray')
-            plt.axis('off')
-            if n_figs > 3:
-                plt.subplot(n_examples,n_figs,n_figs*i+4)
-                plt.imshow(label[i].squeeze().cpu().numpy(),cmap='gray')
-                plt.axis('off')
-        if savefig:
-            plt.savefig(os.path.join(cfg.savedir,cfg.model_name+'eval.png'))
-        plt.show()
     
-    # Calculate performance metrics
-    im_pairs = [[im.squeeze().cpu().numpy(),trg.squeeze().cpu().numpy()] for im,trg in zip(image,reconstruction)]
-    
-    if cfg.reconstruction_loss == 'boundary':
-        metrics=pd.Series() #TODO
-    else:
-        mse = [mean_squared_error(*pair) for pair in im_pairs]
-        ssim = [structural_similarity(*pair, gaussian_weigths=True) for pair in im_pairs]
-        psnr = [peak_signal_noise_ratio(*pair) for pair in im_pairs]
-        metrics=pd.Series({'mse':np.mean(mse),
-                           'ssim':np.mean(ssim),
-                           'psnr':np.mean(psnr)})
+        # Visualize results
+        if visualize is not None:
+            for example in visualize:
+                b,idx = divmod(example, BATCH_SIZE)
+                if b == batch:
+                    plt.subplot(n_examples,n_figs,n_figs*i+1)
+                    plt.imshow(image[idx].squeeze().cpu().numpy(),cmap='gray')
+                    plt.axis('off')
+                    plt.subplot(n_examples,n_figs,n_figs*i+2)
+                    plt.imshow(phosphenes[idx].squeeze().cpu().numpy(),cmap='gray')
+                    plt.axis('off')
+
+                    if n_figs > 3:
+                        plt.subplot(n_examples,n_figs,n_figs*i+3)
+                        plt.imshow(reconstruction[idx].squeeze().cpu().numpy(),cmap='gray')
+                        plt.axis('off')
+                        plt.subplot(n_examples,n_figs,n_figs*i+4)
+                        plt.imshow(label[idx].squeeze().cpu().numpy(),cmap='gray')
+                        plt.axis('off')
+
+                    else:
+                        plt.subplot(n_examples,n_figs,n_figs*i+3)
+                        plt.imshow(reconstruction[idx].squeeze().cpu().numpy(),cmap='gray')
+                        plt.axis('off')
+                    i += 1
+            if batch == len(valloader)-1:
+                if savefig:
+                    plt.savefig(os.path.join(cfg.savedir,cfg.model_name+'eval.png'))
+
+                plt.tight_layout()
+                plt.show()
     return metrics
+            
+    
+    
+def performance_metrics(stimulation, pred, targ, targ_type='image'):
+    """ Calculate electrode activation and image quality metrics or
+    segmentation performance metrics """
+
+    
+    # 1. Percentage of activated electrodes
+    perc_active = np.mean([100.*(s>.5).sum().item() / s.numel() for s in stimulation])
+        
+    if targ_type == 'image':    
+        # 2. Image quality assessment metrics 
+        im_pairs = [[prd.squeeze().cpu().numpy(),trg.squeeze().cpu().numpy()] for prd,trg in zip(pred,targ)]
+        fsim = np.mean([feature_similarity(prd[:,:,None],trg[:,:,None]) for prd,trg in im_pairs])
+        mse  = np.mean([mean_squared_error(*pair) for pair in im_pairs])
+        ssim = np.mean([structural_similarity(*pair, gaussian_weigths=True) for pair in im_pairs])
+        psnr = np.mean([peak_signal_noise_ratio(*pair) for pair in im_pairs])
+        
+        return pd.Series({'perc_active': perc_active,
+                        'mse': mse,
+                        'ssim':ssim,
+                        'fsim':fsim,
+                        'psnr':psnr})
+
+    else: # targ_type == 'label'
+        # 3. Segmentation performance metrics
+        
+        # Area under the ROC-curve (raw predictions, fp-rate vs tp-rate)
+        auc  = roc_auc_score(targ.flatten().cpu().numpy(),pred.flatten().cpu().numpy())
+        
+        # Thresholded predictions
+        pred = (pred>0.5).float()
+
+        # Confusion quadrants
+        tp = pred[targ==1].sum().float()
+        fp = pred[targ==0].sum().float()
+        fn = targ[pred==0].sum().float()
+        tn = (targ[pred==0] == 0).sum().float()
+
+        # Performance metrics 
+        sens = (tp/(tp+fn)).cpu().numpy()
+        spec = (tn/(tn+fp)).cpu().numpy()
+        prec = (tp/(tp+fp)).cpu().numpy()
+        acc  = ((tp + tn) / targ.numel()).cpu().numpy()
+        
+    
+        return pd.Series({'perc_active': perc_active,
+                            'sensitivity': sens,
+                            'specificity': spec,
+                            'precision': prec,
+                            'accuracy': acc,
+                            'auc_score': auc})
+
+
 
 def plot_grad_flow(named_parameters):
     '''Plots the gradients flowing through different layers in the net during training.

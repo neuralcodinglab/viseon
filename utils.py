@@ -28,7 +28,9 @@ class Logger(object):
 
         
         
-def get_pMask(size=(256,256),phosphene_density=32,seed=1,jitter_amplitude=0,dropout=False,perlin_noise_scale=.4):
+def get_pMask(size=(256,256),phosphene_density=32,seed=1,
+              jitter_amplitude=0., intensity_var=0.,
+              dropout=False,perlin_noise_scale=.4):
 
     # Define resolution and phosphene_density
     [nx,ny] = size
@@ -42,17 +44,20 @@ def get_pMask(size=(256,256),phosphene_density=32,seed=1,jitter_amplitude=0,drop
 
     for p in range(n_phosphenes):
         i, j = divmod(p, phosphene_density)
-
-        jitter = np.round(np.multiply(np.array([nx,ny])//phosphene_density, jitter_amplitude * (np.random.rand(2)-.5))).astype(int)
+       
+        jitter = np.round(np.multiply(np.array([nx,ny])//phosphene_density,
+                                      jitter_amplitude * (np.random.rand(2)-.5))).astype(int)
         rx = (j*nx//phosphene_density) + nx//(2*phosphene_density) + jitter[0]
         ry = (i*ny//phosphene_density) + ny//(2*phosphene_density) + jitter[1]
 
         rx = np.clip(rx,0,nx-1)
         ry = np.clip(ry,0,ny-1)
+        
+        intensity = intensity_var*(np.random.rand()-0.5)+1.
         if dropout==True:
-            pMask[rx,ry] = np.random.choice([0.,1.], p=[p_dropout[rx,ry],1-p_dropout[rx,ry]])
+            pMask[rx,ry] = np.random.choice([0.,intensity], p=[p_dropout[rx,ry],1-p_dropout[rx,ry]])
         else:
-            pMask[rx,ry] = 1.
+            pMask[rx,ry] = intensity
             
     return pMask       
  
@@ -72,7 +77,7 @@ def perlin_noise_map(seed=0,shape=(256,256),scale=100,octaves=6,persistence=.5,l
     out = (out-out.min())/(out.max()-out.min())
     return out
 
-def plot_stats(stats):
+def plot_stats(stats, save_as=None):
     """ Plot dict containing lists of train statistics"""
     for key in stats:
         plt.plot(stats[key], label=key)
@@ -80,12 +85,14 @@ def plot_stats(stats):
     plt.xlabel('iteration')
     plt.ylabel('loss')
     plt.title('training statistics')
+    if save_as is not None:
+        plt.savefig(save_as)
     plt.show()
     return
 
 
 # For basic plotting of images with labels as title
-def plot_images(img_tensor,title=None,classes=None):
+def plot_images(img_tensor,title=None,classes=None,save_as=None):
     
     # Un-normalize if images are normalized  
     if img_tensor.min()<0:
@@ -114,6 +121,8 @@ def plot_images(img_tensor,title=None,classes=None):
             plt.imshow(img[i].transpose(1,2,0))
         plt.axis('off')
     plt.tight_layout()
+    if save_as is not None:
+        plt.savefig(save_as,bbox_inches='tight')
     plt.show()
     return
 
@@ -127,14 +136,14 @@ class TensorNormalizer(object):
         self.std  = std
     def __call__(self,image):
         if image.shape[1]==3:
-            return torch.stack([(image[:, c, :, :] - self.mean[c]) / self.std[c] for c in range(3)],dim=1)
+            return torch.clamp(torch.stack([(image[:, c, :, :] - self.mean[c]) / self.std[c] for c in range(3)],dim=1),0,1)
         else:
             return (image-self.mean)/self.std
     def undo(self,image):
         if image.shape[1]==3:
-            return torch.stack([image[:, c, :, :]* self.std[c] + self.mean[c] for c in range(3)],dim=1)
+            return torch.clamp(torch.stack([image[:, c, :, :]* self.std[c] + self.mean[c] for c in range(3)],dim=1),0,1)
         else:
-            return image*self.std+self.mean
+            return torch.clamp(image*self.std+self.mean,0,1)
 
 def add_noise(clean_image, level=0.3):
     """Inverts random elements of the original image
