@@ -94,6 +94,9 @@ def get_dataset(cfg):
         trainset, valset = local_datasets.get_ade50k_dataset(cfg)
     elif cfg['dataset'] == 'BouncingMNIST':
         trainset, valset = local_datasets.get_bouncing_mnist_dataset(cfg)
+    elif cfg['dataset'] == 'Characters':
+        trainset, valset = local_datasets.get_character_dataset(cfg)
+        
     trainloader = DataLoader(trainset, batch_size=cfg['batch_size'],shuffle=True, drop_last=True)
     valloader = DataLoader(valset,batch_size=cfg['batch_size'],shuffle=False, drop_last=True)
     example_batch = next(iter(valloader))
@@ -163,6 +166,9 @@ def get_training_pipeline(cfg):
         forward, lossfunc = get_pipeline_supervised_boundary_reconstruction(cfg)
     elif cfg['pipeline'] == 'unconstrained-video-reconstruction':
         forward, lossfunc = get_pipeline_unconstrained_video_reconstruction(cfg)
+    elif cfg['pipeline'] == 'image-autoencoder-interaction-model':
+        print('Interaction model not implemented yet, add interaction model manually..')
+        forward, lossfunc = get_pipeline_interaction_model(cfg)
     else:
         print(cfg['pipeline'] + 'not supported yet')
         raise NotImplementedError
@@ -359,3 +365,56 @@ def get_pipeline_unconstrained_video_reconstruction(cfg):
 
     return forward, loss_func
 
+
+def get_pipeline_interaction_model(cfg):
+    def forward(batch, models, cfg, to_cpu=False):
+        """Forward pass of the model."""
+
+        # unpack
+        encoder = models['encoder']
+        interaction_model = models['interaction']
+        decoder = models['decoder']
+        simulator = models['simulator']
+
+        # Data manipulation
+        image, _ = batch
+
+        # Forward pass
+        simulator.reset()
+        stimulation = encoder(image)
+        interaction = interaction_model(stimulation)
+        phosphenes = simulator(interaction).unsqueeze(1)
+        reconstruction = decoder(phosphenes)
+
+        # Output dictionary
+        out = {'input':  image * cfg['circular_mask'],
+               'stimulation': stimulation,
+               'interaction': interaction,
+               'phosphenes': phosphenes,
+               'reconstruction': reconstruction * cfg['circular_mask'],
+               'input_resized': resize(image * cfg['circular_mask'], cfg['SPVsize'])}
+        
+        # Sample phosphenes and target at the centers of the phosphenes
+#         out.update({'phosphene_centers': simulator.sample_centers(phosphenes),
+#                     'input_centers': simulator.sample_centers(out['input_resized']) })
+        out.update({'phosphene_brightness': simulator.get_state()['brightness'].squeeze(),
+                    'input_centers': simulator.sample_centers(out['input_resized']).squeeze()})
+
+        if to_cpu:
+            # Return a cpu-copy of the model output
+            out = {k: v.detach().cpu().clone() for k, v in out.items()}
+        return out
+
+    recon_loss = LossTerm(name='reconstruction_loss',
+                          func=torch.nn.MSELoss(),
+                          arg_names=('reconstruction', 'input'),
+                          weight=1 - cfg['regularization_weight'])
+
+    regul_loss = LossTerm(name='regularization_loss',
+                          func=torch.nn.MSELoss(),
+                          arg_names=('phosphene_brightness', 'input_centers'),
+                          weight=cfg['regularization_weight'])
+
+    loss_func = CompoundLoss([recon_loss, regul_loss])
+
+    return forward, loss_func

@@ -41,7 +41,21 @@ def get_bouncing_mnist_dataset(cfg):
     return trainset, valset
 
 
-
+def get_character_dataset(cfg):
+    trainset = Character_Dataset(directory=cfg['data_directory'],
+                                 device=cfg['device'],
+                                 imsize=(128,128),
+                                 validation=False,
+                                 ver_flip=cfg['flip_vertical'],
+                                 hor_flip=cfg['flip_horizontal'])
+    
+    valset = Character_Dataset(directory=cfg['data_directory'],
+                             device=cfg['device'],
+                             imsize=(128,128),
+                             validation=True,
+                             ver_flip=cfg['flip_vertical'],
+                             hor_flip=cfg['flip_horizontal'])
+    return trainset, valset
 
 
 def create_circular_mask(h, w, center=None, radius=None, circular_mask=True):
@@ -273,7 +287,9 @@ class Character_Dataset(Dataset):
                  validation=False,
                  word_scale=.8,
                  invert = True, 
-                 circular_mask=True): 
+                 circular_mask=True, 
+                 ver_flip = False,
+                 hor_flip = False): 
         
         self.imsize = imsize
         self.tensormaker = T.ToTensor()
@@ -302,7 +318,12 @@ class Character_Dataset(Dataset):
         self.data = val_data if validation else train_data
         self.classes = characters
         self.lookupletter = {letter: torch.tensor(index) for index, letter in enumerate(characters)}
-        self.padding_correction = 6 #By default, PILs ImageDraw function uses excessive padding                                                          
+        self.padding_correction = 6 #By default, PILs ImageDraw function uses excessive padding     
+        
+        self.ver_flip = ver_flip
+        self.hor_flip = hor_flip
+        
+        
     def __len__(self):
         return len(self.data)
 
@@ -342,6 +363,12 @@ class Character_Dataset(Dataset):
             
         if self._mask is not None:
             img = img*self._mask
+            
+        if self.ver_flip:
+            img = img.flip([1])
+           
+        if self.hor_flip:
+            img = img.flip([2])
 
         return img.to(self.device), lbl.to(self.device)
 
