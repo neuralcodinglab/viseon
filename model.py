@@ -260,3 +260,51 @@ class ZhaoDecoder(nn.Module):
     def forward(self, x):
         self.out = self.model(x)
         return self.out
+    
+    
+### Exp 3 interaction models (Basic coactivation models)
+
+def ignore_inactive_electrodes(interaction_model, threshold=20e-6):
+    def wrapper(stim, threshold=threshold):
+        """Returns coactivation_model(x) only for active electrodes (above-threshold).
+        For inactive electrodes the return value is set to x."""
+        output = interaction_model(stim)
+        active_electrodes = torch.ones_like(stim).masked_fill(stim<threshold,0)
+        inactive_electrodes = (1-active_electrodes).clip(0,1)
+        return output * active_electrodes + stim * inactive_electrodes
+    return wrapper
+        
+
+# Interaction model
+def get_interaction_model(electrode_coords, data_kwargs, interaction):   
+    # Initialize interaction layer
+    n_electrodes = len(electrode_coords)
+    n_phosphenes = len(electrode_coords)
+    interaction_model = torch.nn.Linear(n_electrodes, n_phosphenes, bias=True).to(data_kwargs['device'])
+    interaction_model.weight.requires_grad = False
+    interaction_model.bias.requires_grad = False
+    
+    # Squared distance between electrodes
+    x, y = electrode_coords.cartesian
+    dist_squared = ((x[:,None]-x)**2 + (y[:,None]-y)**2)
+    
+    if interaction == 'no-interaction':
+        interaction_model.bias.data = torch.zeros(n_phosphenes, **data_kwargs)
+        interaction_model.weight.data = torch.eye(n_phosphenes, n_electrodes,**data_kwargs)
+
+    elif interaction == 'electr-coactivation':
+        SCALE = 100 
+        inter_weight = torch.from_numpy(1/(1+SCALE*dist_squared)).to(**data_kwargs)
+        interaction_model.weight.data = inter_weight
+        interaction_model = ignore_inactive_electrodes(interaction_model)
+        
+    elif interaction == 'costimulation-loss':
+        neigh_weight = torch.from_numpy(1/(1+dist_squared)).to(**data_kwargs)
+        diag_mask = torch.eye(n_phosphenes,n_electrodes,dtype=bool, device=data_kwargs['device'])
+        neigh_weight = neigh_weight.masked_fill(diag_mask,0)
+        interaction_model.weight.data = neigh_weight
+    
+    else:
+        raise NotImplementedError(f'Undefined interaction: {interaction}')
+
+    return interaction_model

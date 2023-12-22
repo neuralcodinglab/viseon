@@ -90,8 +90,8 @@ class L1FeatureLoss(object):
 
 
 def get_dataset(cfg):
-    if cfg['dataset'] == 'ADE50K':
-        trainset, valset = local_datasets.get_ade50k_dataset(cfg)
+    if cfg['dataset'] == 'ADE20K':
+        trainset, valset = local_datasets.get_ade20k_dataset(cfg)
     elif cfg['dataset'] == 'BouncingMNIST':
         trainset, valset = local_datasets.get_bouncing_mnist_dataset(cfg)
     elif cfg['dataset'] == 'Characters':
@@ -127,6 +127,12 @@ def get_models(cfg):
               'decoder' : decoder,
               'optimizer': optimizer,
               'simulator': simulator,}
+    
+    # added section for exp3 with interaction layer
+    if 'interaction' in cfg.keys(): 
+        with open(cfg['electrode_coords'], 'rb') as handle:
+            electrode_coords = pickle.load(handle)
+        models['interaction'] = model.get_interaction_model(electrode_coords, simulator.data_kwargs, cfg['interaction'])
 
     return models
 
@@ -167,8 +173,9 @@ def get_training_pipeline(cfg):
     elif cfg['pipeline'] == 'unconstrained-video-reconstruction':
         forward, lossfunc = get_pipeline_unconstrained_video_reconstruction(cfg)
     elif cfg['pipeline'] == 'image-autoencoder-interaction-model':
-        print('Interaction model not implemented yet, add interaction model manually..')
         forward, lossfunc = get_pipeline_interaction_model(cfg)
+    elif cfg['pipeline'] == 'image-autoencoder-coactivation-loss':
+        forward, lossfunc = get_pipeline_coactivation_loss(cfg)
     else:
         print(cfg['pipeline'] + 'not supported yet')
         raise NotImplementedError
@@ -382,7 +389,7 @@ def get_pipeline_interaction_model(cfg):
         # Forward pass
         simulator.reset()
         stimulation = encoder(image)
-        interaction = interaction_model(stimulation)
+        interaction = interaction_model(stimulation).clip(min=0)
         phosphenes = simulator(interaction).unsqueeze(1)
         reconstruction = decoder(phosphenes)
 
@@ -394,11 +401,10 @@ def get_pipeline_interaction_model(cfg):
                'reconstruction': reconstruction * cfg['circular_mask'],
                'input_resized': resize(image * cfg['circular_mask'], cfg['SPVsize'])}
         
-        # Sample phosphenes and target at the centers of the phosphenes
-#         out.update({'phosphene_centers': simulator.sample_centers(phosphenes),
-#                     'input_centers': simulator.sample_centers(out['input_resized']) })
+        # Target phosphene brightness is sampled pixels at centers of the phosphenes
+        target_pixels = simulator.sample_centers(out['input_resized']).squeeze()
         out.update({'phosphene_brightness': simulator.get_state()['brightness'].squeeze(),
-                    'input_centers': simulator.sample_centers(out['input_resized']).squeeze()})
+                    'target_brightness': cfg['target_brightness_scale']*target_pixels})
 
         if to_cpu:
             # Return a cpu-copy of the model output
@@ -412,9 +418,67 @@ def get_pipeline_interaction_model(cfg):
 
     regul_loss = LossTerm(name='regularization_loss',
                           func=torch.nn.MSELoss(),
-                          arg_names=('phosphene_brightness', 'input_centers'),
+                          arg_names=('phosphene_brightness', 'target_brightness'),
                           weight=cfg['regularization_weight'])
 
     loss_func = CompoundLoss([recon_loss, regul_loss])
+
+    return forward, loss_func
+
+def get_pipeline_coactivation_loss(cfg):  
+    def forward(batch, models, cfg, to_cpu=False):
+        """Forward pass of the model."""
+
+        # unpack
+        encoder = models['encoder']
+        decoder = models['decoder']
+        simulator = models['simulator']
+
+        # Data manipulation
+        image, _ = batch
+
+        # Forward pass
+        simulator.reset()
+        stimulation = encoder(image)
+        phosphenes = simulator(stimulation).unsqueeze(1)
+        reconstruction = decoder(phosphenes)
+        
+        coactivation = models['interaction'](stimulation) # current leaking to neighbouring electrodes
+
+        # Output dictionary
+        out = {'input':  image * cfg['circular_mask'],
+               'stimulation': stimulation,
+               'phosphenes': phosphenes,
+               'reconstruction': reconstruction * cfg['circular_mask'],
+               'input_resized': resize(image * cfg['circular_mask'], cfg['SPVsize'])}
+        
+        # Target phosphene brightness is sampled pixels at centers of the phosphenes
+        target_pixels = simulator.sample_centers(out['input_resized']).squeeze()
+        out.update({'phosphene_brightness': simulator.get_state()['brightness'].squeeze(),
+                    'target_brightness': cfg['target_brightness_scale']*target_pixels,
+                    'coactivation': coactivation})
+
+        if to_cpu:
+            # Return a cpu-copy of the model output
+            out = {k: v.detach().cpu().clone() for k, v in out.items()}
+        return out
+
+    recon_loss = LossTerm(name='reconstruction_loss',
+                          func=torch.nn.MSELoss(),
+                          arg_names=('reconstruction', 'input'),
+                          weight=1 - cfg['regularization_weight'])
+
+    regul_loss = LossTerm(name='regularization_loss',
+                          func=torch.nn.MSELoss(),
+                          arg_names=('phosphene_brightness', 'target_brightness'),
+                          weight=cfg['regularization_weight'])
+    
+    coact_loss = LossTerm(name='coactivation_loss',
+                      func= lambda x1, x2: torch.mean(x1*x2), # mean of product
+                      arg_names=('stimulation','coactivation'),
+                      weight=cfg['coact_loss_scale'])
+
+
+    loss_func = CompoundLoss([recon_loss, regul_loss, coact_loss])
 
     return forward, loss_func

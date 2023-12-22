@@ -15,7 +15,7 @@ import string
 import utils
 from tqdm import tqdm
 
-def get_ade50k_dataset(cfg):
+def get_ade20k_dataset(cfg):
     trainset = ADE_Dataset(device=cfg['device'],
                                           directory=cfg['data_directory'],
                                           imsize=(128, 128),
@@ -53,6 +53,7 @@ def get_character_dataset(cfg):
                              device=cfg['device'],
                              imsize=(128,128),
                              validation=True,
+                             random_pos=False,
                              ver_flip=cfg['flip_vertical'],
                              hor_flip=cfg['flip_horizontal'])
     return trainset, valset
@@ -288,6 +289,7 @@ class Character_Dataset(Dataset):
                  word_scale=.8,
                  invert = True, 
                  circular_mask=True, 
+                 random_pos = True,
                  ver_flip = False,
                  hor_flip = False): 
         
@@ -297,6 +299,7 @@ class Character_Dataset(Dataset):
         self.validation = validation
         self.word_scale = word_scale
         self.invert = invert
+        self.random_pos = random_pos
         
         if circular_mask:
             self._mask = create_circular_mask(*imsize).view(1,*imsize)
@@ -341,20 +344,27 @@ class Character_Dataset(Dataset):
         while max(font.getsize(c))/min(self.imsize) <= self.word_scale:
             fontsize += 1
             font = ImageFont.truetype(f,fontsize)
-        fontsize -=1 
-
-        # Calculate left-over space 
+        fontsize -=1  
         font = ImageFont.truetype(f,fontsize)
-        textsize = font.getsize(c)
-        free_space = np.subtract(self.imsize,textsize)
-        free_space += self.padding_correction
 
-        # Draw character at random position
+        # PIL draw object
         img = Image.fromarray(255*np.ones(self.imsize).astype('uint8'))
         draw = ImageDraw.Draw(img)
-        location = np.random.rand(2)*(free_space)
-        location[1]-= self.padding_correction
-        draw.text(location,c,(0,),font=font)       
+        
+        if self.random_pos:
+            # Calculate left-over space
+            textsize = font.getsize(c)
+            free_space = np.subtract(self.imsize,textsize)
+            free_space += self.padding_correction
+
+            # Draw character at random position
+            location = np.random.rand(2)*(free_space)
+            location[1]-= self.padding_correction
+            draw.text(location,c,(0,),font=font)       
+        else:
+            location = np.array([*self.imsize])//2
+            draw.text(location, c, (0,), font=font, anchor='mm', align='center')
+
         img = self.tensormaker(img)
         
         
