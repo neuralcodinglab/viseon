@@ -1,7 +1,7 @@
 # End-to-end optimization of prosthetic vision
 ## Branch for the end-to-end experiments with biologically plausible phosphene simulation
 
-### Download model parameters
+### Trained  model parameters can be found here:
 https://surfdrive.surf.nl/files/index.php/s/vMG4UuJHo0njlWH 
 
 ## Publication
@@ -32,15 +32,14 @@ van der Grinten, M., de Ruyter van Steveninck, J., Lozano, A., Pijnacker, L., RÃ
           cd dynaphos-core
           python setup.py install
 
-3.  Download the simulator configuration (yaml file with the onfiguration parameters, and pickle file with the phosphene maps) here : https://surfdrive.surf.nl/files/index.php/s/vMG4UuJHo0njlWH
-4.  (optional) Adjust or add training pipelines in *init_training.py* according to needs.
-5.  Adjust or add yaml file with training configuration (in the ./_config directory).
+3.  (optional) Adjust or add training pipelines in *init_training.py* according to needs.
+4.  (optional) Adjust or add yaml file with training configuration (in the ./_config directory).
     - Make sure to correctly set the *save_path*, *data_directory*, the simulator  *base_config* and *phosphene_map* with the right paths. 
     - Set *load_preprocessed* to *False* if no access to preprocessed dataset.
-6. Initialize training.
+5. Initialize training.
     - For example, run:
     
-          python training.py -c .\_config\naturalistic_unconstrained.yaml
+          python training.py -c .\_config\exp2\naturalistic_unconstrained.yaml
 
     - Monitor training using tensorboard:
     

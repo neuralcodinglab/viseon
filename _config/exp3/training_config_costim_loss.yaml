@@ -1,0 +1,54 @@
+Description:
+    model_name: supp_exp_utah_C
+
+general: 
+    use_deterministic_algorithms: False
+    batch_size: 4
+    device: 'cuda:0' 
+    gpu : 0
+    save_path : ./Out/example_60_electrodes_costimulation_loss
+    save_output: [phosphenes, stimulation, reconstruction]
+    
+simulator:
+    base_config: ./_config/exp3/simulator_config.yaml
+    use_threshold: True
+    phosphene_map: ./_config/phosphene_maps/phosphene_coords_60.pickle
+    electrode_coords: ./_config/phosphene_maps/electrode_coords_60.pickle
+    
+e2e_models:
+    model_architecture: end-to-end-autoencoder # choose from end-to-end-autoencoder, zhao-autoencoder
+    in_channels: 1
+    n_electrodes: 60
+    output_scaling: 128.0e-6
+    output_steps: None # Unconstrained (to range [0,128e-6])
+    out_channels: 1
+    encoder_out_activation: sigmoid 
+    decoder_out_activation: sigmoid
+
+optimization:
+    learning_rate : 0.00005 # was 0.0005 
+    epochs : 75
+    trainstats_per_epoch : 3
+    validations_per_epoch: 1
+    early_stop_criterium : 20
+
+training_pipeline:
+    pipeline: image-autoencoder-coactivation-loss
+    regularization_weight: 0.99999  # relative weight for enforcing interpretable (supervised) phosphene encodings
+    target_brightness_scale: 0.9
+    interaction: costimulation-loss
+    coact_loss_scale: 5.0e+5
+    
+dataset:
+    dataset: Characters
+    data_directory : ../../_Datasets/Characters/
+    flip_vertical: True
+    flip_horizontal: False
+    
+    
+
+
+    
+    
+
+

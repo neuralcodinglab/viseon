@@ -10,9 +10,8 @@ general:
     save_output: [phosphenes, stimulation, reconstruction]
     
 simulator:
-    base_config: ../../dynaphos-core/config/params.yaml
-    use_threshold: False
-    phosphene_map: ../../dynaphos-core/config/DefaultCoordinateMap_1000_phosphenes.pickle
+    base_config: ./_config/exp2/simulator_config.yaml
+    phosphene_map: ./_config/phosphene_maps/DefaultCoordinateMap_1000_phosphenes.pickle
     
 e2e_models:
     model_architecture: end-to-end-autoencoder # choose from end-to-end-autoencoder, zhao-autoencoder
@@ -37,7 +36,7 @@ training_pipeline:
     
 
 dataset:
-    dataset: ADE50K
+    dataset: ADE20K
     data_directory : ../../_Datasets/ADE20K/
     load_preprocessed: True # for the ADE50k dataset:
     sequence_length: 5 # for the BouncingMNIST dataset:
