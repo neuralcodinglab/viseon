@@ -1,8 +1,3 @@
-*.log
-out/
-*.ipynb*
+Experiments
+Out
 __pycache__
-_Archive/
-*_[Aa]rchived*
-*model_parameters
-datasets/*

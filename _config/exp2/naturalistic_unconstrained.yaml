@@ -1,0 +1,51 @@
+Description:
+    model_name: exp2_unconstrained_nov30
+
+general: 
+    use_deterministic_algorithms: False
+    batch_size: 4
+    device: 'cuda:0' 
+    gpu : 0
+    save_path : ./Out/example_naturalistic_unconstrained
+    save_output: [phosphenes, stimulation, reconstruction]
+    
+simulator:
+    base_config: ./_config/exp2/simulator_config.yaml
+    phosphene_map: ./_config/phosphene_maps/DefaultCoordinateMap_1000_phosphenes.pickle
+    
+e2e_models:
+    model_architecture: end-to-end-autoencoder # choose from end-to-end-autoencoder, zhao-autoencoder
+    in_channels: 1
+    n_electrodes: 1000
+    output_scaling: 128.0e-6
+    output_steps: None # unconstrained output
+    out_channels: 1
+    encoder_out_activation: relu
+    decoder_out_activation: sigmoid
+
+optimization:
+    learning_rate : 0.0005
+    epochs : 16
+    trainstats_per_epoch : 24
+    validations_per_epoch: 8
+    early_stop_criterium : 15
+
+training_pipeline:
+    pipeline: unconstrained-image-autoencoder
+    regularization_weight: 0.5  # relative weight for enforcing interpretable (supervised) phosphene encodings
+    
+
+dataset:
+    dataset: ADE20K
+    data_directory : ../../_Datasets/ADE20K/
+    load_preprocessed: True # for the ADE50k dataset:
+    sequence_length: 5 # for the BouncingMNIST dataset:
+    mode: recon # for the BouncingMNIST dataset:
+    
+    
+
+
+    
+    
+
+

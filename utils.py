@@ -2,130 +2,121 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 import time
 import datetime
 import logging
 import torchvision
-import noise
+# import noise
 import pandas as pd
-import os 
+import os
+import argparse
+import yaml
+
+import pickle
 
 
 
-class Logger(object):
-    def __init__(self,log_file='out.log'):
-        self.logger = logging.getLogger()
-        hdlr = logging.FileHandler(log_file)
-        formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
-        hdlr.setFormatter(formatter)
-        self.logger.addHandler(hdlr) 
-        self.logger.setLevel(logging.INFO)
-    def __call__(self,message):
-        #outputs to Jupyter console
-        print('{} {}'.format(datetime.datetime.now(), message))
-        #outputs to file
-        self.logger.info(message)
 
-        
-        
-def get_pMask(size=(256,256),phosphene_density=32,seed=1,
-              jitter_amplitude=0., intensity_var=0.,
-              dropout=False,perlin_noise_scale=.4):
+# Dilation is used for the reg-loss on the phosphene image: phosphenes do not have to map 1 on 1, small offset is allowed.
+def dilation5x5(img, kernel=None):
+    if kernel is None:
+        kernel = torch.tensor([[[[0., 0., 1., 0., 0.],
+                              [0., 1., 1., 1., 0.],
+                              [1., 1., 1., 1., 1.],
+                              [0., 1., 1., 1., 0.],
+                              [0., 0., 1., 0., 0.]]]], requires_grad=False, device=img.device)
+    return torch.clamp(torch.nn.functional.conv2d(img, kernel, padding=kernel.shape[-1]//2), 0, 1)
 
-    # Define resolution and phosphene_density
-    [nx,ny] = size
-    n_phosphenes = phosphene_density**2 # e.g. n_phosphenes = 32 x 32 = 1024
-    pMask = torch.zeros(size)
+def dilation3x3(img, kernel=None):
+    if kernel is None:
+        kernel = torch.tensor([[[
+                              [ 0, 1., 0.],
+                              [ 1., 1., 1.],
+                              [ 0., 1., 0.],]]], requires_grad=False, device=img.device)
+    return torch.clamp(torch.nn.functional.conv2d(img, kernel, padding=kernel.shape[-1]//2), 0, 1)
+
+def resize(x, out_size=(256,256), interpolation='bilinear'):
+    """interpolate/resize tensor to out_size"""
+    return torch.nn.functional.interpolate(x, size=out_size, mode=interpolation)
+
+def normalize(x):
+    """scale to range [0, 1]"""
+    return (x - x.min()) / (x.max()-x.min())
+
+def undo_standardize(x, mean=0.459, std=0.227):
+    """maps standardized grayscale images to range [0, 1]"""
+    return (x*std+mean).clip(0,1)
+
+def load_config(yaml_file):
+    with open(yaml_file) as file:
+        raw_content = yaml.load(file,Loader=yaml.FullLoader) # nested dictionary
+    return {k:v for params in raw_content.values() for k,v in params.items()} # unpacked
 
 
-    # Custom 'dropout_map'
-    p_dropout = perlin_noise_map(shape=size,scale=perlin_noise_scale*size[0],seed=seed)
-    np.random.seed(seed)
+class CustomSummaryTracker():
+    """Helper for saving training history, model output, loss, etc.."""
+    def __init__(self):
+        self.history = dict()
 
-    for p in range(n_phosphenes):
-        i, j = divmod(p, phosphene_density)
-       
-        jitter = np.round(np.multiply(np.array([nx,ny])//phosphene_density,
-                                      jitter_amplitude * (np.random.rand(2)-.5))).astype(int)
-        rx = (j*nx//phosphene_density) + nx//(2*phosphene_density) + jitter[0]
-        ry = (i*ny//phosphene_density) + ny//(2*phosphene_density) + jitter[1]
+    def get(self):
+        return self.history
 
-        rx = np.clip(rx,0,nx-1)
-        ry = np.clip(ry,0,ny-1)
-        
-        intensity = intensity_var*(np.random.rand()-0.5)+1.
-        if dropout==True:
-            pMask[rx,ry] = np.random.choice([0.,intensity], p=[p_dropout[rx,ry],1-p_dropout[rx,ry]])
-        else:
-            pMask[rx,ry] = intensity
-            
-    return pMask       
- 
-
-def perlin_noise_map(seed=0,shape=(256,256),scale=100,octaves=6,persistence=.5,lacunarity=2.):
-    out = np.zeros(shape)
-    for i in range(shape[0]):
-        for j in range(shape[1]):
-            out[i][j] = noise.pnoise2(i/scale, 
-                                        j/scale, 
-                                        octaves=octaves, 
-                                        persistence=persistence, 
-                                        lacunarity=lacunarity, 
-                                        repeatx=shape[0], 
-                                        repeaty=shape[1], 
-                                        base=seed)
-    out = (out-out.min())/(out.max()-out.min())
-    return out
-
-def plot_stats(stats, save_as=None):
-    """ Plot dict containing lists of train statistics"""
-    for key in stats:
-        plt.plot(stats[key], label=key)
-    plt.legend()
-    plt.xlabel('iteration')
-    plt.ylabel('loss')
-    plt.title('training statistics')
-    if save_as is not None:
-        plt.savefig(save_as)
-    plt.show()
-    return
-
+    def update(self, new_entries):
+        for key, value in new_entries.items():
+            if key in self.history:
+                self.history[key].append(value)
+            else:
+                self.history[key] = [value]
 
 # For basic plotting of images with labels as title
-def plot_images(img_tensor,title=None,classes=None,save_as=None):
-    
-    # Un-normalize if images are normalized  
+def plot_images(img_tensor,title=None,classes=None):
+
+    # Un-normalize if images are normalized
     if img_tensor.min()<0:
         if img_tensor.shape[1]==3:
             normalizer = TensorNormalizer(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        elif img_tensor.shape[1]==1:
+        else:
             normalizer = TensorNormalizer(mean=0.459, std=0.227)
         img_tensor = normalizer.undo(img_tensor)
-        
+
     # Make numpy
-    img = img_tensor.detach().cpu().numpy()  
-    
-    
+    img = img_tensor.detach().cpu().numpy()
+
+
     # Plot all
-    for i in range(len(img)):    
+    for i in range(len(img)):
         plt.subplot(1,len(img),i+1)
         if type(title) is list:
             plt.title(title[i])
         elif title is not None and classes is not None:
             plt.title(classes[title[i].item()])
-        if img.shape[1]==1 or len(img.shape)==3:
+        if img.shape[1]==1 or len(img.shape)==3 or len(img.shape)==5:
             plt.imshow(np.squeeze(img[i]),cmap='gray',vmin=0,vmax=1)
-        elif img.shape[1]==2:    
+        elif img.shape[1]==2:
             plt.imshow(img[i][1],cmap='gray',vmin=0,vmax=1)
         else:
             plt.imshow(img[i].transpose(1,2,0))
         plt.axis('off')
     plt.tight_layout()
-    if save_as is not None:
-        plt.savefig(save_as,bbox_inches='tight')
     plt.show()
     return
 
+def log_gradients_in_model(model, model_name, logger, step):
+    for tag, value in model.named_parameters():
+        if value.grad is not None:
+            logger.add_histogram(f"{model_name}/{tag}", value.grad.cpu(), step)
+
+def save_pickle(data_dict, path):
+    """saves dict entries to path, as pickle file"""
+    # Make directory if not exists
+    if not os.path.exists(path):
+        os.makedirs(path)
+
+    # Write model output to pickle
+    for name, data in data_dict.items():
+        with open(os.path.join(path, f'{name}.pickle'), 'wb') as handle:
+            pickle.dump(data, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 # To do (or undo) normalization on torch tensors
 class TensorNormalizer(object):
@@ -136,26 +127,15 @@ class TensorNormalizer(object):
         self.std  = std
     def __call__(self,image):
         if image.shape[1]==3:
-            return torch.clamp(torch.stack([(image[:, c, :, :] - self.mean[c]) / self.std[c] for c in range(3)],dim=1),0,1)
+            return torch.stack([(image[:, c, ...] - self.mean[c]) / self.std[c] for c in range(3)],dim=1)
         else:
             return (image-self.mean)/self.std
     def undo(self,image):
         if image.shape[1]==3:
-            return torch.clamp(torch.stack([image[:, c, :, :]* self.std[c] + self.mean[c] for c in range(3)],dim=1),0,1)
+            return torch.stack([image[:, c, ...]* self.std[c] + self.mean[c] for c in range(3)],dim=1)
         else:
-            return torch.clamp(image*self.std+self.mean,0,1)
+            return image*self.std+self.mean
 
-def add_noise(clean_image, level=0.3):
-    """Inverts random elements of the original image
-    value of noise level should be chosen in range [0. , 0.5]"""
-    # Add noise (random inversion of the image)
-    image = clean_image.clone()
-    mask = np.random.randint(0,image.numel(),int(level*image.numel()))
-    image.flatten()[mask] = 1-image.flatten()[mask]
-    return image
-
-    
-    
 # To convert to 3-channel format (or reversed)
 class RGBConverter(object):
     def __init__(self,weights=[.3,.59,.11]):
@@ -170,4 +150,3 @@ class RGBConverter(object):
         image = torch.stack([self.weights[c]*image[:,c,:,:] for c in range(3)], dim=1)
         image = torch.sum(image,dim=1,keepdim=True)
         return image
-    
