@@ -1,6 +1,0 @@
-savedir,model_name,experiment,condition,seed,n_epochs,log_interval,convergence_crit,input_channels,binary_stimulation,simulation_type,reconstruction_channels,out_activation,dataset,batch_size,device,optimizer,learning_rate,reconstruction_loss,reconstruction_loss_param,sparsity_loss,kappa,reg_weight,phosphene_regularization,description
-./out/nov30/exp5,exp5_B_S4a,exp5,B,4,10,50,100,1,True,irregular,1,sigmoid,ADE20K,32,cuda:0,adam,0.0008,boundary,0.7,L1,0.06,1.,bce,ADE20k dataset. Realistic phosphene simulator
-./out/nov30/exp5,exp5_B_S3a,exp5,B,3,10,50,100,1,True,irregular,1,sigmoid,ADE20K,32,cuda:0,adam,0.0008,boundary,0.7,L1,0.06,1.,bce,ADE20k dataset. Realistic phosphene simulator
-./out/nov30/exp5,exp5_B_S2a,exp5,B,2,10,50,100,1,True,irregular,1,sigmoid,ADE20K,32,cuda:0,adam,0.0008,boundary,0.7,L1,0.06,1.,bce,ADE20k dataset. Realistic phosphene simulator
-./out/nov30/exp5,exp5_B_S1a,exp5,B,1,10,50,100,1,True,irregular,1,sigmoid,ADE20K,32,cuda:0,adam,0.0008,boundary,0.7,L1,0.06,1.,bce,ADE20k dataset. Realistic phosphene simulator
-./out/nov30/exp5,exp5_B_S0a,exp5,B,0,10,50,100,1,True,irregular,1,sigmoid,ADE20K,32,cuda:0,adam,0.0008,boundary,0.7,L1,0.06,1.,bce,ADE20k dataset. Realistic phosphene simulator
