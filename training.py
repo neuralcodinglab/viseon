@@ -392,6 +392,12 @@ if __name__ == '__main__':
                     help="choose L1 or L2 type of sparsity loss (MSE or L1('taxidrivers') norm)") 
     ap.add_argument("-k", "--kappa", type=float, default=0.01,
                     help="sparsity weight parameter kappa")    
+    ap.add_argument("-reg_type", "--phosphene_regularization", type=str, default=None,
+                    help="Phosphene regularization mode. Choose from: 'L1', 'L2', 'dist', 'bce'")  
+    ap.add_argument("-reg_wgt", "--reg_weight", type=float, default=None,
+                    help="Phosphene regularization weight")  
+    ap.add_argument("-phl", "--phosphene_loss_param", type=float, default=None,
+                    help="Phosphene regularization weight")  
 
     args = vars(ap.parse_args())
     if args['use_csv'] is None:
