@@ -56,7 +56,7 @@ class CustomLoss(object):
             self.stimu_loss = lambda x: torch.mean(.5*(x+1)) #converts tanh to sigmoid first
         elif stimu_loss_type == 'L2':
             self.stimu_loss = lambda x: torch.mean((.5*(x+1))**2) #converts tanh to sigmoid first
-        elif stimu_loss_type is None:
+        else:
             self.stimu_loss = None
         self.kappa = kappa if self.stimu_loss is not None else 0
         
@@ -407,6 +407,9 @@ if __name__ == '__main__':
         train(models, dataset, optimization, train_settings)
     else:
         training_protocol = pd.read_csv(args['use_csv']).replace({'None':None,'True':True,'False':False})
+        # Add missing columns for older configs
+        for col in ['phosphene_regularization', 'reg_weight', 'phosphene_loss_param']:
+            training_protocol[col] = training_protocol.col if col in training_protocol.columns else None
         for i,cfg in training_protocol.iterrows():
             print(cfg)
             models, dataset, optimization, train_settings = initialize_components(cfg)
