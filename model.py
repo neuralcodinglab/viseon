@@ -296,6 +296,7 @@ def get_interaction_model(electrode_coords, data_kwargs, interaction):
         SCALE = 100 
         inter_weight = torch.from_numpy(1/(1+SCALE*dist_squared)).to(**data_kwargs)
         interaction_model.weight.data = inter_weight
+        interaction_model.bias.data = torch.zeros(n_phosphenes, **data_kwargs)
         interaction_model = ignore_inactive_electrodes(interaction_model)
         
     elif interaction == 'costimulation-loss':
@@ -303,6 +304,7 @@ def get_interaction_model(electrode_coords, data_kwargs, interaction):
         diag_mask = torch.eye(n_phosphenes,n_electrodes,dtype=bool, device=data_kwargs['device'])
         neigh_weight = neigh_weight.masked_fill(diag_mask,0)
         interaction_model.weight.data = neigh_weight
+        interaction_model.bias.data = torch.zeros(n_phosphenes, **data_kwargs)
     
     else:
         raise NotImplementedError(f'Undefined interaction: {interaction}')
